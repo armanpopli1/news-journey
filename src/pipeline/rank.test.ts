@@ -48,7 +48,7 @@ const sources = JSON.parse(readFileSync(join(root, "config/sources.json"), "utf8
 
 
 const letters = ["a","b","c","d","e","f","g"];
-async function harvestAndRank(p: string, opts: {manual?:boolean;alternates?:number;interstitial?:string[];unverified?:string[]} = {}) {
+async function harvestAndRank(p: string, opts: {manual?:boolean;unattended?:boolean;alternates?:number;interstitial?:string[];unverified?:string[]} = {}) {
   write("config/sources.json",{...sources,enabledSources:["rss"],ranking:{mode:opts.manual?"manual":"newest"}});
   write("config/pipeline.json",{...pipeline,format:"roundup",roundup:{minStories:3,maxStories:4,alternates:opts.alternates??2}});
   const {HARVEST_DIR,todayStamp,videoDir}=await import("../util.js");
@@ -70,7 +70,7 @@ async function harvestAndRank(p: string, opts: {manual?:boolean;alternates?:numb
     if(url.startsWith('https://news.example.org/'))return new Response(init?.method==='HEAD'?null:`<article>${'The fixture article states one concrete, checkable fact. '.repeat(50)}</article>`);
     throw new Error('Unexpected network '+url);
   }) as typeof fetch;
-  const {rank}=await import('./rank.js');const [topic]=await rank();const dir=videoDir(topic.id);
+  const {rank}=await import('./rank.js');const [topic]=await rank(undefined,undefined,undefined,opts.unattended?{unattended:true}:undefined);const dir=videoDir(topic.id);
   const get=(name:string)=>JSON.parse(readFileSync(join(dir,name),'utf8'));
   return {topic,dir,prompts,meta:get('meta.json'),choice:get('story-choice.json'),report:get('selection-report.json')};
 }
@@ -90,6 +90,15 @@ test('manual mode pauses without an env override and honors the actual chosen le
  const {lockStoryChoice,applyStoryChoice}=await import('./story-choice.js');
  const keys=choice.entries.map((e:any)=>e.key);lockStoryChoice(dir,{keys:[keys[0],keys[1],keys[3]],lead:keys[3]},'user');
  const selected=applyStoryChoice(dir);assert.deepEqual(selected.stories!.map(s=>s.headline),['two story e','two story a','two story c']);
+});
+test('an unattended run takes the recommended slate even when the story choice would otherwise be required',async()=>{
+ const previous=process.env.HARNESS_STORY_CHOICE;process.env.HARNESS_STORY_CHOICE='require';
+ try {
+  const {choice,meta}=await harvestAndRank('six',{unattended:true});
+  assert.equal(meta.status,'selected','no awaiting_story_choice pause when nobody can answer');assert.ok(choice.lock,'the recommendation is locked as the standing choice');
+  const waiting=await harvestAndRank('seven');
+  assert.equal(waiting.meta.status,'awaiting_story_choice','an attended run with the same environment still asks');
+ } finally { if(previous===undefined)delete process.env.HARNESS_STORY_CHOICE;else process.env.HARNESS_STORY_CHOICE=previous; }
 });
 test('replacement skips multiple unreadable candidates without another selection-model call',async()=>{
  const {topic,report}=await harvestAndRank('three',{alternates:0,interstitial:['b','d','e']});

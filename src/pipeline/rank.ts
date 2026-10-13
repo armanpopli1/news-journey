@@ -105,7 +105,7 @@ function candidatePick(item: RankedCandidate, i: number): RoundupStoryPick {
   return { headline: item.title, summary: item.summary, weight: i === 0 ? "lead" : "standard", sourceItemIds: [item.id], primaryUrl: item.url, suggestedScene: "news_card", principalEntity: item.title, area: "other", verticals: ["other"] };
 }
 
-async function rankRoundup(fresh: HarvestItem[], cfg: PipelineConfig): Promise<Topic[]> {
+async function rankRoundup(fresh: HarvestItem[], cfg: PipelineConfig, unattended: boolean): Promise<Topic[]> {
   const candidates = await eligibleCandidates(fresh);
   const candidateIds = new Set(candidates.map(c => c.id));
   const citesCandidates = (s: { sourceItemIds: string[] }) => s.sourceItemIds.every(id => candidateIds.has(id));
@@ -247,7 +247,8 @@ async function rankRoundup(fresh: HarvestItem[], cfg: PipelineConfig): Promise<T
     ...stories.map((s) => s.primaryUrl),
     ...fresh.filter((it) => allSourceItems.includes(it.id)).map((it) => it.url),
   ];
-  const requireChoice = storyChoiceRequired(activeRoot(), rankingConfig().mode); // Automated mode takes the recommended slate
+  // Automated mode takes the recommended slate; an unattended run (nobody to answer the screen) does too.
+  const requireChoice = !unattended && storyChoiceRequired(activeRoot(), rankingConfig().mode);
   createVideoWorkdir(topic, urls, topic.repo?.fullName ?? null, requireChoice ? "awaiting_story_choice" : "selected");
 
   // The evidence behind the decision, every ordered candidate and its verification outcome.
@@ -337,7 +338,9 @@ async function rankSingles(fresh: HarvestItem[], n: number): Promise<Topic[]> {
 
 /* ---------- entrypoint ---------- */
 
-export async function rank(harvestPath?: string, count?: number, formatOverride?: string): Promise<Topic[]> {
+/** `unattended` never parks the package at awaiting_story_choice (HARNESS_STORY_CHOICE and manual mode included);
+ * the caller must have rejected manual ranking, whose order is just the harvest order. */
+export async function rank(harvestPath?: string, count?: number, formatOverride?: string, opts: { unattended?: boolean } = {}): Promise<Topic[]> {
   const path = harvestPath ?? join(HARVEST_DIR, `${todayStamp()}.json`);
   if (!existsSync(path)) throw new Error(`No harvest file at ${path} — run harvest first`);
   const harvest = readJson<HarvestFile>(path);
@@ -352,6 +355,6 @@ export async function rank(harvestPath?: string, count?: number, formatOverride?
   if (fresh.length === 0) throw new Error("Nothing new to cover after dedup");
 
   return format === "roundup"
-    ? rankRoundup(fresh, cfg)
+    ? rankRoundup(fresh, cfg, opts.unattended === true)
     : rankSingles(fresh, count ?? cfg.topicsPerRun ?? 1);
 }

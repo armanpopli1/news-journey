@@ -136,7 +136,8 @@ function runProducerRoutingFixture(program: string): string {
       }
       mock.module(new URL('harvest.ts', source), { namedExports: { harvest: async () => {} } });
       const originalRank = await import(new URL('rank.ts', source));
-      mock.module(new URL('rank.ts', source), { namedExports: { ...originalRank, rank: async () => [selected] } });
+      const rankCalls = [];
+      mock.module(new URL('rank.ts', source), { namedExports: { ...originalRank, rank: async (...args) => { rankCalls.push(args); return [selected]; } } });
       ${program}
       assert.equal(networkCalls, 0);
       process.stdout.write('PRODUCER_ROUTING_FIXTURE_PASSED');
@@ -580,4 +581,88 @@ test('actual visual-recovery producer opens normal choices before any unused art
     assert.equal(calls,0,'The chosen snapshot must also skip unused binding');assert.equal(tools,0);assert.ok(readFileSync(join(f.dir,'visual-choices.json')).equals(choiceBytes));
   `);
   assert.match(output,/PRODUCER_ROUTING_FIXTURE_PASSED/);
+});
+
+test('text-only producer writes the newsletter files and a receipt without any media stage, then stays out of the review queue', () => {
+  const output = runProducerRoutingFixture(`
+    const script = { hook: 'A proposed transit pilot.', body: [{ voiceover: 'The city announced a proposed transit pilot.', scene: 'news_card', assetRef: 'og-0', onScreen: { title: 'Proposed transit pilot' } }], cta: 'Read the source.', publish: { title: 'Proposed transit pilot', description: 'The city announced a proposal.', linkedinPost: 'The city announced a proposal.', hashtags: [] } };
+    const media = { assets: 0, voice: 0, avatar: 0, render: 0, visuals: 0, diagrams: 0 }, routes = [], newsletters = []; let failNewsletter = false;
+    const forbid = name => async () => { media[name]++; throw new Error('Unexpected media stage: ' + name); };
+    mock.module(new URL('writing-context.ts', source), { namedExports: { ...originalWriting, packageWritingContext: async (id, outputs) => {
+      routes.push(outputs);
+      return { topic: selected, writerKey: 'same-writer', parent: { parentId: id, parentIdentity: 'fixed-parent' }, call: () => async () => { throw new Error('Unexpected model call'); } };
+    } } });
+    mock.module(new URL('script.ts', source), { namedExports: { ...originalScript, writeScript: async id => {
+      save('workdir/videos/' + id + '/script.json', script);
+      save('workdir/videos/' + id + '/companion-writing-receipt.json', originalWriting.preparedScriptReceipt(selected, 'same-writer', script));
+      return script;
+    } } });
+    mock.module(new URL('newsletter.ts', source), { namedExports: {
+      prepareCompanionText: async () => ({ issue: {} }),
+      newsletter: async (dayArg, rerender, edition, videoId, options) => {
+        if (failNewsletter) throw new Error('NEWSLETTER_LENGTH_FAILED');
+        newsletters.push({ dayArg, rerender, edition, videoId, options });
+        const html = join(workspace, 'workdir/newsletters', dayArg + '.html');
+        mkdirSync(join(html, '..'), { recursive: true });
+        writeFileSync(html, '<html>issue</html>'); writeFileSync(html.replace(/[.]html$/, '.md'), '# issue');
+        return html;
+      } } });
+    mock.module(new URL('visual-development.ts', source), { namedExports: { ...(await import(new URL('visual-development.ts', source))), ensureSourceVisualDevelopment: forbid('visuals') } });
+    mock.module(new URL('assets.ts', source), { namedExports: { ...(await import(new URL('assets.ts', source))), gatherAssets: forbid('assets') } });
+    mock.module(new URL('voice.ts', source), { namedExports: { ...(await import(new URL('voice.ts', source))), voice: forbid('voice') } });
+    mock.module(new URL('avatar.ts', source), { namedExports: { ...(await import(new URL('avatar.ts', source))), avatar: forbid('avatar') } });
+    mock.module(new URL('render.ts', source), { namedExports: { ...(await import(new URL('render.ts', source))), render: forbid('render') } });
+    const originalDiagrams = await import(new URL('story-diagram.ts', source));
+    mock.module(new URL('story-diagram.ts', source), { namedExports: { ...originalDiagrams, ensureEditionDiagrams: forbid('diagrams') } });
+    const { produce } = await import(new URL('produce.ts', source));
+
+    await assert.rejects(produce({ textOnly: true, until: 'script' }), /remove --until/);
+
+    const f = seed('text-only', null);
+    await produce({ topicFile: f.topicFile, textOnly: true });
+    assert.deepEqual(routes, ['edition'], 'a text-only package asks for the newsletter scope, not a video-only one');
+    assert.equal(newsletters.length, 1);
+    assert.deepEqual(newsletters[0].options, { textOnly: true }, 'the newsletter is built without artwork or archive rebuild');
+    assert.equal(newsletters[0].videoId, f.id); assert.equal(newsletters[0].rerender, false);
+    assert.deepEqual(media, { assets: 0, voice: 0, avatar: 0, render: 0, visuals: 0, diagrams: 0 });
+    assert.equal(readFileSync(join(f.dir, 'newsletter.md'), 'utf8'), '# issue');
+    assert.equal(readFileSync(join(f.dir, 'newsletter.html'), 'utf8'), '<html>issue</html>');
+    const meta = JSON.parse(readFileSync(join(f.dir, 'meta.json'), 'utf8'));
+    assert.equal(meta.status, 'text_ready'); assert.equal(meta.textOnly, true);
+    const receipt = JSON.parse(readFileSync(join(f.dir, 'text-only-receipt.json'), 'utf8'));
+    assert.equal(receipt.textOnly, true); assert.equal(receipt.published, false);
+    assert.deepEqual(receipt.outputs, { markdown: 'newsletter.md', html: 'newsletter.html' });
+    assert.equal(receipt.sha256.markdown, (await import('node:crypto')).createHash('sha256').update('# issue').digest('hex'));
+    for (const name of ['assets.json', 'final.mp4', 'audio.wav', 'avatar.mp4']) assert.equal(existsSync(join(f.dir, name)), false, name);
+
+    // A failed newsletter fails the whole unattended run and leaves the package retryable, not 'text_ready'.
+    const g = seed('text-only-fails', null);
+    failNewsletter = true;
+    await assert.rejects(produce({ topicFile: g.topicFile, textOnly: true }), /NEWSLETTER_LENGTH_FAILED/);
+    assert.equal(JSON.parse(readFileSync(join(g.dir, 'meta.json'), 'utf8')).status, 'failed:newsletter');
+    assert.equal(existsSync(join(g.dir, 'newsletter.md')), false);
+  `);
+  assert.match(output, /PRODUCER_ROUTING_FIXTURE_PASSED/);
+});
+
+test('text-only run ranks without ever pausing for a story choice, and refuses manual ranking up front', () => {
+  const output = runProducerRoutingFixture(`
+    save('config/sources.json', { ranking: { mode: 'manual' } });
+    mock.module(new URL('writing-context.ts', source), { namedExports: { ...originalWriting, packageWritingContext: async () => { throw new Error('STOP_AT_PREPARATION'); } } });
+    const { produce } = await import(new URL('produce.ts', source));
+    seed('text-only-rank', null);
+    await assert.rejects(produce({ textOnly: true, force: true }), /cannot wait for story choices.*newest.*priorities/);
+    assert.equal(rankCalls.length, 0, 'manual ranking is refused before harvest or ranking spends anything');
+    for (const mode of ['newest', 'priorities']) {
+      save('config/sources.json', { ranking: { mode, priorities: [{ keyword: 'ai', weight: 5 }] } });
+      seed('text-only-rank-' + mode, null);
+      await assert.rejects(produce({ textOnly: true, force: true }), /STOP_AT_PREPARATION/);
+      assert.deepEqual(rankCalls.at(-1)[3], { unattended: true }, mode + ' ranking is asked not to pause');
+    }
+    // An interactive run keeps its existing behaviour.
+    seed('interactive-rank', null);
+    await assert.rejects(produce({ force: true }), /STOP_AT_PREPARATION/);
+    assert.equal(rankCalls.at(-1)[3], undefined);
+  `);
+  assert.match(output, /PRODUCER_ROUTING_FIXTURE_PASSED/);
 });

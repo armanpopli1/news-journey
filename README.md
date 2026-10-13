@@ -76,6 +76,14 @@ brief ─► sources ─► stories ─► script ─► newsletter ─► visua
 *The same pipeline, rendered. Four minutes, no narration needed.*
 </div>
 
+### Text-only edition (no visuals, narration or video)
+
+```sh
+npm run produce -- --text-only
+```
+
+Runs sources → stories → script → newsletter and stops there. It never waits for a story choice, so `ranking.mode` in `config/sources.json` must be `newest` or `priorities` (the stock `manual` mode is refused up front). It writes `newsletter.md` and `newsletter.html` into the edition's package folder (`workdir/videos/<id>/`, the paths are printed) next to a `text-only-receipt.json`, and marks the package `text_ready`: a preview for you to read and deliver yourself. It does not approve, post or publish anything, does not appear in `npm run review`, and cannot be picked up by a later media run. A second run on the same day returns the files it already made instead of writing again. Any failure exits non-zero. `--dry-run` stops after story selection like every other dry run.
+
 ## Writers
 
 Bring the account you already have. The Free edition offers the four writers that have each produced a finished edition from a plain brief on a fresh workspace.

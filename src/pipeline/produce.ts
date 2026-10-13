@@ -2,7 +2,8 @@ import { watchStage } from '../watchdog-progress.js';
 import { authorize, currentActor, atomicJson, activeRoot } from "../workspaces.js";
 import { join } from "node:path";
 import { assertDryRunTopicFile, enableDryRun, shouldStopAfterSelection } from "../dry-run.js";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { Topic, VideoMeta } from "../types.js";
 import { harvest } from "./harvest.js";
 import { rank, roundupPackageId } from "./rank.js";
@@ -12,6 +13,8 @@ import { roleHash } from '../llm/role-router.js';
 import { finishWorkingMemory } from '../memory/context.js';
 import { withPublicationMemory } from '../memory/runtime.js';
 import { runIndependentDevelopment, type DevelopmentOutcome } from './development.js';
+import { validateRankingConfig } from "./user-ranking.js";
+import type { SourcePreferencesConfig } from "../source-preferences.js";
 import { VIDEOS_DIR, loadConfig, readJson, videoDir, writeJson, slugify, todayStamp, log } from "../util.js";
 
 interface PipelineConfig {
@@ -28,12 +31,15 @@ interface ProduceOpts {
   dryRun?: boolean;
   /** Continue an existing package (e.g. one paused at `awaiting_visual_choice`): completed stages are kept. */
   resume?: string;
+  /** Unattended newsletter preview: sources → ranking → script → newsletter, no visuals, narration or video, no publishing. */
+  textOnly?: boolean;
 }
 
 /** Resuming an existing package keeps its requested outputs. Stop-after and fixture options
  * choose the initial scope only; omitting them on resume must never add a newsletter. */
 export function productionWritingOutputs(opts: ProduceOpts, saved: { outputs?: WritingOutputs } | null): WritingOutputs {
   if (saved?.outputs !== undefined) return writingOutputs(saved);
+  if (opts.textOnly) return 'edition'; // the newsletter is the product here, not a companion to a video
   return !opts.until && (!opts.topicFile || (opts.edition ?? 'daily-roundup') !== 'daily-roundup') ? 'edition' : 'video';
 }
 
@@ -86,6 +92,42 @@ export function producedToday(editionId: string): { id: string; status: VideoMet
   return null;
 }
 
+/** An unattended run has nobody to answer the story-choice screen, and manual ranking is only the harvest order. */
+export function assertUnattendedRanking(ranking: SourcePreferencesConfig['ranking'] = loadConfig<SourcePreferencesConfig>("sources").ranking): void {
+  if (validateRankingConfig(ranking).mode === 'manual') {
+    throw new Error('--text-only runs unattended and cannot wait for story choices. Set "ranking.mode" to "newest" or "priorities" in config/sources.json (manual order is just the harvest order).');
+  }
+}
+
+export const TEXT_ONLY_RECEIPT = 'text-only-receipt.json';
+
+/** Finish a text-only package: newsletter formatting without artwork or archive rebuild, then the two files and a receipt
+ * beside the package. `text_ready` is not a media state: the watchdog, review queue and approval flow never pick it up. */
+async function finishTextOnly(id: string, editionArg: string | undefined, generate: Parameters<typeof completeCompanionNewsletter>[2]): Promise<void> {
+  let htmlPath = '';
+  await watchStage('newsletter-formatting', () => completeCompanionNewsletter([id], editionArg, async (...args) => (htmlPath = await generate(...args))), id);
+  const markdownPath = htmlPath.replace(/\.html$/, '.md');
+  if (!htmlPath.endsWith('.html') || !existsSync(htmlPath) || !existsSync(markdownPath)) throw new Error('The newsletter stage reported success but did not leave its Markdown and HTML files');
+  const dir = videoDir(id), outputs = { markdown: join(dir, 'newsletter.md'), html: join(dir, 'newsletter.html') };
+  copyFileSync(markdownPath, outputs.markdown);
+  copyFileSync(htmlPath, outputs.html);
+  const sha256 = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
+  const completedAt = new Date().toISOString();
+  atomicJson(join(dir, TEXT_ONLY_RECEIPT), {
+    version: 1, id, textOnly: true, completedAt,
+    // A preview for the person to read and deliver. Nothing here approves, posts or publishes it.
+    published: false, review: 'preview-only',
+    skipped: ['visuals', 'narration', 'presenter', 'render', 'final-media-review'],
+    outputs: { markdown: 'newsletter.md', html: 'newsletter.html' },
+    sha256: { markdown: sha256(outputs.markdown), html: sha256(outputs.html) },
+  });
+  const metaPath = join(dir, 'meta.json');
+  writeJson(metaPath, { ...readJson<VideoMeta>(metaPath), status: 'text_ready', textOnly: true, updatedAt: completedAt });
+  log(`Text-only edition ready for your review (not published): ${id}`);
+  console.log(`newsletter.md: ${outputs.markdown}`);
+  console.log(`newsletter.html: ${outputs.html}`);
+}
+
 /** Prepare evidence once, develop requested text and source visuals independently, then
  * align the accepted outputs before assets, narration and final rendering can ship. */
 async function produceOne(topic: Topic, opts: ProduceOpts, companionGenerator?: Parameters<typeof completeCompanionNewsletter>[2]): Promise<void> {
@@ -93,11 +135,15 @@ async function produceOne(topic: Topic, opts: ProduceOpts, companionGenerator?: 
   const { assertMediaRepairAllowed } = await import('./media-completion.js');
   assertMediaRepairAllowed(id);
   const hasMediaContinuation = existsSync(join(videoDir(id), 'media-continuation.json'));
+  if (opts.textOnly && (hasMediaContinuation || existsSync(join(videoDir(id), 'assets.json')) || existsSync(join(videoDir(id), 'final.mp4')))) {
+    throw new Error(`Package ${id} already has media work; continue it without --text-only so its video is not abandoned`);
+  }
   // "Choose your stories": nothing is written until the person's choice is locked; the resume writes the script
   // from exactly the locked stories (story-choice.ts).
   if (readJson<VideoMeta>(join(videoDir(id), "meta.json")).status === "awaiting_story_choice") {
     if (hasMediaContinuation) throw new Error("An approved media continuation cannot change its selected stories");
     const { readStoryChoice, applyStoryChoice } = await import("./story-choice.js");
+    if (opts.textOnly) throw new Error(`Package ${id} is waiting for a story choice; --text-only never waits. Make the choice in the app, or start a new unattended run.`);
     if (!readStoryChoice(videoDir(id))?.lock) { log(`Paused for story choice (${id}).`); return; }
     const applied = applyStoryChoice(videoDir(id));
     const { reservedUrls, ...chosen } = applied; topic = chosen;
@@ -136,8 +182,9 @@ async function produceOne(topic: Topic, opts: ProduceOpts, companionGenerator?: 
       return { context, companion: outputs === 'edition' };
     } catch (e) { return fail('script', e as Error); }
   }, id);
+  if (opts.textOnly && !companion) throw new Error(`Package ${id} was started as a video-only package; start a new package for a text-only edition (its writing scope cannot change)`);
   if (!continuation) {
-  const developVisuals = opts.until !== 'script' && opts.until !== 'assets';
+  const developVisuals = opts.until !== 'script' && opts.until !== 'assets' && !opts.textOnly;
   const tasks: Record<string, () => Promise<unknown>> = {};
   let editorialFailureStage = 'script';
   const editorial = context.dailyEditorial ? () => import('./journey-editorial.js').then(module => module.prepareJourneyEditorial(context)) : undefined;
@@ -187,6 +234,12 @@ async function produceOne(topic: Topic, opts: ProduceOpts, companionGenerator?: 
   }
   } else log(`Continuing only saved media for ${id}; approved script, newsletter and original editorial allowance are unchanged.`);
   if (opts.until === "script") return;
+  if (opts.textOnly) {
+    // companion is true: text-only packages always request the 'edition' scope, so the newsletter text is already prepared.
+    try { await finishTextOnly(id, opts.edition && opts.edition !== 'daily-roundup' ? opts.edition : undefined, companionGenerator ?? ((day, rerender, edition, videoId) => import('./newsletter.js').then(module => module.newsletter(day, rerender, edition, videoId, { textOnly: true })))); }
+    catch (e) { fail('newsletter', e as Error); }
+    return;
+  }
 
   try {
     if (!(resuming && existsSync(join(videoDir(id), "assets.json")))) {
@@ -313,6 +366,7 @@ export async function produce(opts: ProduceOpts = {}, companionGenerator?: Param
   authorize("produce", { edition: opts.edition ?? "daily-roundup" });
   if (opts.dryRun) enableDryRun();
   assertDryRunTopicFile(opts.topicFile);
+  if (opts.textOnly && opts.until) throw new Error('--text-only already stops after the newsletter; remove --until');
   const cfg = loadConfig<PipelineConfig>("pipeline");
   if (cfg.autonomy !== "review") {
     throw new Error('config/pipeline.json must keep "autonomy" set to "review"');
@@ -324,6 +378,14 @@ export async function produce(opts: ProduceOpts = {}, companionGenerator?: Param
 
   if (!opts.force && !opts.topicFile && !opts.resume) {
     const already = producedToday(editionId);
+    if (opts.textOnly && already?.status === 'text_ready') {
+      // A nightly job that fires twice must not re-buy the writing; hand back the files it already made.
+      log(`Guard: today's ${editionId} text-only edition (${already.id}) is already complete — exiting (use --force to override)`);
+      const dir = videoDir(already.id);
+      console.log(`newsletter.md: ${join(dir, 'newsletter.md')}`);
+      console.log(`newsletter.html: ${join(dir, 'newsletter.html')}`);
+      return;
+    }
     if (already && isShipped(already.status)) {
       // Video completion can precede a newsletter failure. Retry only this exact companion
       // before a full-edition request returns; completed media stages remain untouched.
@@ -419,8 +481,9 @@ export async function produce(opts: ProduceOpts = {}, companionGenerator?: Param
     const research = await sourceEdition(edition, todayStamp());
     topics = [buildEditionTopic(research, editionId)];
   } else {
+    if (opts.textOnly) assertUnattendedRanking();
     await watchStage('collect-stories', () => harvest());
-    topics = await watchStage('select-stories', () => rank(undefined, opts.count ? parseInt(opts.count, 10) : undefined));
+    topics = await watchStage('select-stories', () => rank(undefined, opts.count ? parseInt(opts.count, 10) : undefined, undefined, opts.textOnly ? { unattended: true } : undefined));
   }
   for (const topic of topics) {
     const path = join(videoDir(topic.id), "meta.json");
@@ -450,7 +513,9 @@ export async function produce(opts: ProduceOpts = {}, companionGenerator?: Param
     }
   }
 
-  log(`Batch done: ${topics.length - failures.length}/${topics.length} videos produced`);
+  log(`Batch done: ${topics.length - failures.length}/${topics.length} ${opts.textOnly ? 'text editions' : 'videos'} produced`);
+  // An unattended run reports success only when everything it was asked for exists; "one failure must not sink the batch" is for a person watching.
+  if (opts.textOnly && failures.length) throw new Error(`Text-only edition incomplete (${failures.length}/${topics.length} failed):\n${failures.join("\n")}`);
   if (failures.length === topics.length && topics.length > 0) {
     throw new Error(`All ${topics.length} topics failed:\n${failures.join("\n")}`);
   }
@@ -460,6 +525,7 @@ export async function produce(opts: ProduceOpts = {}, companionGenerator?: Param
   if (paused) log("Newsletter deferred until the customer's choices are made.");
   // Each complete edition was written before media and refreshed after its final checks.
   if (!opts.until && !paused) for (const id of completedIds) {
-    if (isShipped(readJson<VideoMeta>(join(videoDir(id), 'meta.json')).status)) await closePackageWorkingMemory(id, 'complete');
+    const status = readJson<VideoMeta>(join(videoDir(id), 'meta.json')).status;
+    if (isShipped(status) || status === 'text_ready') await closePackageWorkingMemory(id, 'complete');
   }
 }

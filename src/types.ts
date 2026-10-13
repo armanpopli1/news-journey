@@ -133,6 +133,8 @@ export type VideoStatus =
   | "avatar_generated"
   | "rendered"
   | "pending_review"
+  /** `produce --text-only` finished: a newsletter-only preview. Deliberately not a resumable media state and not in the review queue. */
+  | "text_ready"
   | "approved"
   | "rejected"
   | "posted"
@@ -193,6 +195,8 @@ export interface VideoMeta {
   delivery?: Partial<Record<Platform, PublishOutcome>>;
   edition?: string; // edition preset id (e.g. "example-topic"); absent -> daily-roundup
   editionSerial?: number; // per-edition serial number
+  /** Written by `produce --text-only`: a newsletter-only preview. No assets, narration or video exist or are expected. */
+  textOnly?: boolean;
 }
 
 export interface WordStamp {

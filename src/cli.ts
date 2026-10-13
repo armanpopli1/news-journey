@@ -211,6 +211,7 @@ program
   .option("--resume <id>", "continue an existing package (e.g. one waiting for visual choices); completed stages are kept")
   .option("--count <n>", "topics per run (default: config topicsPerRun)")
   .option("--edition <name>", "edition preset; defaults to daily-roundup")
+  .option("--text-only", "unattended newsletter preview: sources → ranking → script → newsletter.md/.html; no visuals, narration or video; never publishes (needs ranking.mode newest or priorities)")
   .option("--dry-run", "block every external mutation while exercising the local pipeline")
   .action(async (opts) => {
     if (opts.dryRun) enableDryRun();

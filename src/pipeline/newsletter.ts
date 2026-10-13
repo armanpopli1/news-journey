@@ -137,10 +137,11 @@ export function assertIssueCarriesVisuals(key: string, data: NewsletterData, ren
 }
 
 /** Presentation only: never generate or fact-review artwork while formatting a newsletter. */
-export async function attachStoryVisuals(data:NewsletterData,id:string|undefined):Promise<void> {
+export async function attachStoryVisuals(data:NewsletterData,id:string|undefined,withArtwork=true):Promise<void> {
   // A rerender may carry pictures from an earlier image-enabled issue.
   data.motionStories=[];
-  if(!readPersonalization(activeRoot()).newsletterImages)return;
+  // A text-only edition has no visual stage to read; the workspace's image preference cannot require one.
+  if(!withArtwork||!readPersonalization(activeRoot()).newsletterImages)return;
   if(!id)throw new Error('Newsletter images require a selected video package; refusing to build without story artwork');
   const dir=contained(VIDEOS_DIR,safeId(id));
   if(!existsSync(join(dir,"script.json")))throw new Error('Newsletter images require the selected script; refusing to build without story artwork');
@@ -659,7 +660,9 @@ export async function prepareCompanionText(id: string, support: Pick<Issue, 'rad
   return { issue, context };
 }
 
-export async function newsletter(date?: string, rerenderOnly = false, editionId?: string, videoId?: string): Promise<string> {
+/** `textOnly`: a preview with no story artwork, and no archive-site rebuild (an unapproved issue stays out of site/public). */
+export async function newsletter(date?: string, rerenderOnly = false, editionId?: string, videoId?: string, options: { textOnly?: boolean } = {}): Promise<string> {
+  const textOnly = options.textOnly === true;
   const day = validDay(date ?? todayStamp());
   if (editionId) safeId(editionId);
   // Edition routing: special editions write EDITION-SCOPED filenames (<day>-<edition>.*) so an
@@ -717,16 +720,16 @@ export async function newsletter(date?: string, rerenderOnly = false, editionId?
     data.editionCover = ed.coverFile;    // ditto for the cover — both are branding, not cached content
     data.logoDataUri = logoDataUri(activeRoot()); data.styleDirection = readPersonalization(activeRoot()).styleDirection; // customer identity, same rule
     data.brand = newsletterBrand(ed.videoAccent); data.customShell = newsletterShell(activeRoot());
-    await attachStoryVisuals(data,vid);
+    await attachStoryVisuals(data,vid,!textOnly);
     const outputs = renderedNewsletterOutputs(data);
-    if (readPersonalization(activeRoot()).newsletterImages) assertIssueCarriesVisuals(key,data,outputs.web);
+    if (!textOnly && readPersonalization(activeRoot()).newsletterImages) assertIssueCarriesVisuals(key,data,outputs.web);
     writeFileSync(dataPath, JSON.stringify({...data, audioDataUri:undefined, captionWords:undefined, videoDataUri:undefined, logoDataUri:undefined, brand:undefined, customShell:undefined},null,2));
     writeFileSync(join(NEWSLETTER_DIR, `${key}.md`), outputs.markdown);
     const htmlPath = join(NEWSLETTER_DIR, `${key}.html`);
     writeFileSync(htmlPath, outputs.web);
     writeFileSync(join(NEWSLETTER_DIR, `${key}.linkedin.html`), outputs.linkedin);
     log(`Newsletter re-rendered from cache → ${htmlPath}`);
-    await rebuildSite();
+    if (!textOnly) await rebuildSite();
     return htmlPath;
   }
 
@@ -774,9 +777,9 @@ export async function newsletter(date?: string, rerenderOnly = false, editionId?
   data.captionWords = briefing?.words ?? null;
   data.videoDataUri = videoDataUri(currentVideo);
 
-  await attachStoryVisuals(data,vid);
+  await attachStoryVisuals(data,vid,!textOnly);
   const outputs = renderedNewsletterOutputs(data);
-  if (readPersonalization(activeRoot()).newsletterImages) assertIssueCarriesVisuals(key,data,outputs.web);
+  if (!textOnly && readPersonalization(activeRoot()).newsletterImages) assertIssueCarriesVisuals(key,data,outputs.web);
   const mdPath = join(NEWSLETTER_DIR, `${key}.md`);
   writeFileSync(mdPath, outputs.markdown);
   const htmlPath = join(NEWSLETTER_DIR, `${key}.html`);
@@ -788,6 +791,6 @@ export async function newsletter(date?: string, rerenderOnly = false, editionId?
     JSON.stringify({ ...data, audioDataUri: undefined, captionWords: undefined, videoDataUri: undefined, logoDataUri: undefined, brand: undefined, customShell: undefined }, null, 2)
   );
   log(`Newsletter written → ${mdPath} + ${htmlPath}`);
-  await rebuildSite();
+  if (!textOnly) await rebuildSite();
   return htmlPath;
 }
