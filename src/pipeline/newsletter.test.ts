@@ -6,6 +6,7 @@ import type { NewsletterData } from "./newsletter-html.js";
 import type { SelectionReportRow } from "./user-ranking.js";
 import {
   completeSlateIssue,
+  editionHasVideo,
   assertNewsletterCache,
   assertNewsletterLength,
   newsletterCacheIdentity,
@@ -181,4 +182,21 @@ test("radar and other-desks headings are omitted when no verified fixture items 
   assert.deepEqual(radar, []); assert.deepEqual(signals, []);
   const outputs = renderedNewsletterOutputs(data(completeSupportingIssue(completeSlateIssue(issue(), stories), radar, signals)));
   for (const output of Object.values(outputs)) assert.doesNotMatch(output, /Trending, not yet covered|From the other desks/);
+});
+
+test("Markdown and LinkedIn outputs omit the Covered this week footer when nothing was covered", () => {
+  const empty = renderedNewsletterOutputs(data(completeSlateIssue(issue(), stories)));
+  for (const output of [empty.markdown, empty.web, empty.linkedin]) assert.doesNotMatch(output, /Covered this week/);
+  assert.doesNotMatch(empty.markdown, /\*Covered this week/);
+  const covered = renderedNewsletterOutputs({ ...data(completeSlateIssue(issue(), stories)), coveredWeek: ["Earlier story", "Another story"] });
+  assert.match(covered.markdown, /\*Covered this week: Earlier story · Another story\*/);
+  assert.match(covered.linkedin, /<i>Covered this week: Earlier story · Another story<\/i>/);
+  assert.match(covered.web, /Covered this week/);
+});
+
+test("an edition announces a video only when a rendered file exists or a public link does", () => {
+  assert.equal(editionHasVideo("", false), false, "a text-only package has nothing to announce");
+  assert.equal(editionHasVideo("", true), true, "a rendered but unposted video is still pending publication");
+  assert.equal(editionHasVideo("https://videos.example.org/20260911-example.mp4", false), true);
+  assert.equal(editionHasVideo("http://localhost:4777/media/x.mp4", false), false, "a private address is not a public link");
 });

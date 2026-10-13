@@ -58,8 +58,7 @@ ${figure(issue.lead.sourceUrl)}
 ${itemsSection}
 ${radarSection}
 ${signals}
-<p><i>Covered this week: ${d.coveredWeek.map(esc).join(" · ")}</i></p>
-<p>— ${esc((d.publisher ?? EXAMPLE_PUBLISHER).name)} · ${esc((d.publisher ?? EXAMPLE_PUBLISHER).publication)}</p>
+${d.coveredWeek.length ? `<p><i>Covered this week: ${d.coveredWeek.map(esc).join(" · ")}</i></p>\n` : ""}<p>— ${esc((d.publisher ?? EXAMPLE_PUBLISHER).name)} · ${esc((d.publisher ?? EXAMPLE_PUBLISHER).publication)}</p>
 <p><b>Subscribe</b> for the daily briefing, and follow for the 90-second video briefings.</p>
 <p><i>${d.publisher ? "" : "Fictional beta content. Replace the sample identity before publication."}</i></p>
 </body></html>`;

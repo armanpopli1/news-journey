@@ -439,6 +439,11 @@ async function briefingAudio(day: string, vid?: string): Promise<{ dataUri: stri
   return { dataUri: `data:audio/mp4;base64,${readFileSync(m4a).toString("base64")}`, words };
 }
 
+/** The "video available after publishing" line promises a file; announce a video only when one exists or is public. */
+export function editionHasVideo(publicUrl: string, hasRenderedFile: boolean): boolean {
+  return hasRenderedFile || isPublicVideoUrl(publicUrl);
+}
+
 async function todaysVideo(day: string, vid?: string): Promise<{ id: string; headline: string; durationSec: number; videoUrl: string; posted: boolean } | null> {
   if (!existsSync(VIDEOS_DIR)) return null;
   const ids = readdirSync(VIDEOS_DIR).filter((id) => id.startsWith(day.replace(/-/g, "")));
@@ -446,11 +451,16 @@ async function todaysVideo(day: string, vid?: string): Promise<{ id: string; hea
   // Prefer the explicit edition video; else the roundup; else the newest
   const id = vid ?? (ids.find((i) => i.includes("roundup")) ?? ids.sort().reverse()[0]);
   const meta = readJson<VideoMeta>(join(VIDEOS_DIR, id, "meta.json"));
+  const hasRenderedFile = existsSync(join(VIDEOS_DIR, id, "final.mp4"));
   let videoUrl = meta.posts.linkedin?.url ?? "";
-  if (!isPublicVideoUrl(videoUrl)) {
+  // The URL template names a location for any id; it proves nothing about a package that never rendered or posted.
+  if (!isPublicVideoUrl(videoUrl) && (hasRenderedFile || Object.keys(meta.posts).length)) {
     try { videoUrl = await publicVideoUrl(meta); } catch { videoUrl = ""; }
   }
   if (!isPublicVideoUrl(videoUrl)) videoUrl = "";
+  // No rendered file and no public link means no video to announce (a text-only run, or a newsletter written
+  // before media exists); the final media refresh re-reads this once final.mp4 lands.
+  if (!editionHasVideo(videoUrl, hasRenderedFile)) return null;
   return { id, headline: meta.headline, durationSec: Math.round(meta.durationSec ?? 0), videoUrl, posted: Boolean(videoUrl) };
 }
 
@@ -534,6 +544,8 @@ export function toMarkdown(d: NewsletterData): string {
       ? `🎬 **Today's video (${d.video.durationSec}s): [${d.video.headline}](${d.video.videoUrl})**`
       : `🎬 **Today's video (${d.video.durationSec}s): ${d.video.headline} — video available after publishing.**`
     : "";
+  // An empty list would print a bare "Covered this week:" label; the HTML renderer already omits it.
+  const covered = d.coveredWeek.length ? `\n*Covered this week: ${d.coveredWeek.join(" · ")}*\n` : "";
   return `<!-- subject: ${d.issue.subject} -->
 # ${d.publisher?.publication ?? publisher().publication}
 *${d.dateLong} · Issue #${d.issueNo}*
@@ -542,9 +554,7 @@ ${video}
 
 ## The lead: ${d.issue.lead.title}
 ${d.issue.lead.body} ([${d.issue.lead.sourceName}](${d.issue.lead.sourceUrl}))
-${itemsSection}${radarSection}${signals}
-*Covered this week: ${d.coveredWeek.join(" · ")}*
-
+${itemsSection}${radarSection}${signals}${covered}
 — ${d.publisher?.name ?? publisher().name}
 `;
 }
