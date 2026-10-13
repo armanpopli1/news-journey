@@ -304,6 +304,9 @@ async function produceOne(topic: Topic, opts: ProduceOpts, companionGenerator?: 
 
   continuation?.assertUnchanged();
   setStatus(id, "pending_review");
+  // A reviewed draft is coverage: someone who sends the text themselves never produces a publication receipt,
+  // and the dedup window would otherwise only ever see "selected" reservations.
+  (await import("../state/ledger.js")).markPreviewed(id);
   const { notifyDraftReady } = await import("../review/notify.js");
   notifyDraftReady(id, topic.headline);
   log(`Draft ready for review: npm run preview ${id}`);

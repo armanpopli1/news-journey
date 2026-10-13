@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { HarvestItem, LedgerEntry } from "../types.js";
-import { coverageUrlKey, filterCovered } from "./ledger.js";
+import { coverageUrlKey, filterCovered, applyPreviewed } from "./ledger.js";
 
 const day = 86400_000;
 const ago = (days: number) => new Date(Date.now() - days * day).toISOString();
@@ -42,4 +42,21 @@ test("only previewed and posted entries cover a story; a reservation or rejected
 test("an unparseable coveredAt or URL never suppresses anything it cannot prove", () => {
   const out = filterCovered([item("a", "https://x.org/a")], 30, [entry({ coveredAt: "not a date", urls: ["https://x.org/a"] }), entry({ urls: ["not a url"] })]);
   assert.deepEqual(ids(out), ["a"]);
+});
+
+test("applyPreviewed upgrades a reservation, refreshes coveredAt, never downgrades posted, ignores unknown ids", () => {
+  const now = new Date();
+  const ledger = { entries: [entry({ id: "r", status: "selected", coveredAt: ago(3) }), entry({ id: "p", status: "posted", coveredAt: ago(3) })] };
+  assert.equal(applyPreviewed(ledger, "r", now), true);
+  assert.deepEqual([ledger.entries[0]!.status, ledger.entries[0]!.coveredAt], ["previewed", now.toISOString()]);
+  assert.equal(applyPreviewed(ledger, "p", now), false);
+  assert.equal(ledger.entries[1]!.status, "posted");
+  assert.equal(applyPreviewed(ledger, "missing", now), false);
+});
+
+test("a previewed edition suppresses its own stories in the next harvest", () => {
+  const ledger = { entries: [entry({ id: "r", status: "selected", urls: ["https://x.org/a"] })] };
+  assert.deepEqual(ids(filterCovered([item("a", "https://x.org/a")], 30, ledger.entries)), ["a"]);
+  applyPreviewed(ledger, "r");
+  assert.deepEqual(ids(filterCovered([item("a", "https://x.org/a")], 30, ledger.entries)), []);
 });

@@ -27,6 +27,22 @@ export function updateEntry(id: string, patch: Partial<LedgerEntry>): void {
   }
 }
 
+/** An edition that reached review counts as covered from now on, whether or not this tool ever delivers it: someone
+ * who sends the text themselves never produces a publication receipt, so without this the window only sees
+ * "selected" reservations. Never downgrades "posted". A missing entry is left alone (selection owns creating it). */
+export function applyPreviewed(ledger: Ledger, id: string, now = new Date()): boolean {
+  const e = ledger.entries.find((x) => x.id === id);
+  if (!e || e.status === "posted") return false;
+  e.status = "previewed";
+  e.coveredAt = now.toISOString();
+  return true;
+}
+
+export function markPreviewed(id: string): void {
+  const ledger = loadLedger();
+  if (applyPreviewed(ledger, id)) saveLedger(ledger);
+}
+
 export function recentEntries(days: number): LedgerEntry[] {
   const cutoff = Date.now() - days * 86400_000;
   return loadLedger().entries.filter((e) => new Date(e.coveredAt).getTime() > cutoff);
