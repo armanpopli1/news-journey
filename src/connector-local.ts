@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { CODE_ROOT, atomicJson, authenticate, contained, read } from './workspaces.js';
+import { CODE_ROOT, atomicJson, authenticate, contained, read, issueAgentToken, revokeAgentToken, type Member } from './workspaces.js';
 import { configureHost, restoreHost, hostFor, executable, connectionId, connectionPath, loadConnection, recordToolCall, type Connection } from './connector-hosts.js';
 import { harnessApi, createHarnessMcp, callHarnessTool, TOOL_DEFINITIONS } from './connector-tools.js';
 import { releaseLock } from './release-lock.js';
@@ -28,6 +28,18 @@ function hostOperation<T>(root: string, id: string, run: () => Promise<T>): Prom
   }).finally(() => { if (hostOperations.get(key) === next) hostOperations.delete(key); });
   hostOperations.set(key, next); return next;
 }
+/**
+ * Connections made before agents held a scoped token store the member's own token. Swap it for an agent token under the caller's
+ * lock, keeping the generation: host configs embed `--generation`, so a new one would orphan the installed plugin.
+ */
+function scopeLegacy(root: string, id: string, c: Connection): Connection {
+  if (c.revoked) return c;
+  let holder: Member; try { holder = authenticate(root, c.token); } catch { return c; }
+  if (holder.role === 'agent' || holder.id !== c.actor) return c;
+  const scoped = { ...c, token: issueAgentToken(root, holder, id) };
+  atomicJson(connectionPath(root, id), scoped);
+  return scoped;
+}
 export function configureConnection(root: string, agent: string, token: string): Promise<Connection> {
   const actor = authenticate(root, token);
   const id = connectionId(agent, actor.id), key = root + ':' + id, generation = connectionGenerations.get(key) || 0;
@@ -41,6 +53,7 @@ async function configure(root: string, agent: string, token: string, validate: (
   const ready = () => { validate(); const unlock = releaseLock(root, 'connect-' + id); try { const c = { ...loadConnection(root, id), ready: true }; atomicJson(file, c); return c; } finally { unlock(); } };
     let c = read<Connection | null>(file, null);
     if (c && !c.revoked) {
+      { const unlock = releaseLock(root, 'connect-' + id); try { c = scopeLegacy(root, id, c); } finally { unlock(); } }
       loadConnection(root, id);
       if (c.agent === 'codex' && !c.ready) {
         await native('codex', ['plugin', 'marketplace', 'add', join(c.plugin!, '../..')]);
@@ -49,7 +62,7 @@ async function configure(root: string, agent: string, token: string, validate: (
       }
       return c;
     }
-    c = { id, agent, actor: actor.id, token, generation: randomBytes(16).toString('hex'), workspace: read<{ id: string }>(contained(root, 'workspace.json'), { id: '' }).id, installedAt: new Date().toISOString() };
+    c = { id, agent, actor: actor.id, token: '', generation: randomBytes(16).toString('hex'), workspace: read<{ id: string }>(contained(root, 'workspace.json'), { id: '' }).id, installedAt: new Date().toISOString() };
     if (!c.workspace) throw new Error('Create a named workspace before connecting');
     const name = 'content-harness-' + createHash('sha256').update(root + ':' + id).digest('hex').slice(0, 16);
     if (host.kind === 'plugin') {
@@ -71,7 +84,8 @@ async function configure(root: string, agent: string, token: string, validate: (
       writeFileSync(c.plugin, `import { createRequire } from 'node:module';\nimport { pathToFileURL } from 'node:url';\nconst require = createRequire(${JSON.stringify(pathToFileURL(join(CODE_ROOT, 'connect.mjs')).href)});\nconst { register } = await import(pathToFileURL(require.resolve('tsx/esm/api')).href); register();\nexport default async function(pi) { const { installPiTools } = await import(${JSON.stringify(moduleUrl)}); return installPiTools(pi, ${JSON.stringify(root)}, ${JSON.stringify(id)}, ${JSON.stringify(c.generation)}); }\n`, { mode: 0o600 });
     } else c.config = configureHost(agent, root, CODE_ROOT, name, process.execPath, cliArgs(c));
     // Record before native installation, so even an interrupted install remains revocable.
-    const unlock = releaseLock(root, 'connect-' + id); try { atomicJson(file, c); } finally { unlock(); }
+    // The agent's own scoped token is minted only now, so a failed host configuration leaves no orphan credential.
+    const unlock = releaseLock(root, 'connect-' + id); try { c.token = issueAgentToken(root, actor, id); atomicJson(file, c); } finally { unlock(); }
     if (agent === 'codex') {
       await native('codex', ['plugin', 'marketplace', 'add', join(c.plugin!, '../..')]);
       await native('codex', ['plugin', 'add', 'content-harness@' + c.marketplace]);
@@ -89,10 +103,10 @@ export function selfServeConnection(root: string, agent: string, token: string):
   const unlock = releaseLock(root, 'connect-' + id);
   try {
     const existing = read<Connection | null>(file, null);
-    if (existing && !existing.revoked) return loadConnection(root, id);
+    if (existing && !existing.revoked) { scopeLegacy(root, id, existing); return loadConnection(root, id); }
     const workspace = read<{ id: string }>(contained(root, 'workspace.json'), { id: '' }).id;
     if (!workspace) throw new Error('Create a named workspace before connecting');
-    const c: Connection = { id, agent, actor: actor.id, token, generation: randomBytes(16).toString('hex'), workspace, installedAt: new Date().toISOString(), ready: true, selfServe: true };
+    const c: Connection = { id, agent, actor: actor.id, token: issueAgentToken(root, actor, id), generation: randomBytes(16).toString('hex'), workspace, installedAt: new Date().toISOString(), ready: true, selfServe: true };
     atomicJson(file, c);
     return c;
   } finally { unlock(); }
@@ -102,7 +116,7 @@ export async function disconnectConnection(root: string, agent: string, token: s
   const key = root + ':' + connectionId(agent, actor.id); connectionGenerations.set(key, (connectionGenerations.get(key) || 0) + 1);
   const unlock = releaseLock(root, 'connect-' + connectionId(agent, actor.id));
   let c: Connection | null;
-  try { c = read<Connection | null>(file, null); if (!c) return { message: 'No harness configuration to restore' }; atomicJson(file, { ...c, token: '', revoked: true }); }
+  try { c = read<Connection | null>(file, null); if (!c) return { message: 'No harness configuration to restore' }; atomicJson(file, { ...c, token: '', revoked: true }); revokeAgentToken(root, connectionId(agent, actor.id)); }
   finally { unlock(); }
   const connection = c;
   return hostOperation(root, connectionId(agent, actor.id), async () => {
@@ -116,7 +130,9 @@ export async function disconnectConnection(root: string, agent: string, token: s
 }
 
 export async function embeddedConnector(root: string, id: string, generation?: string) {
+  { const unlock = releaseLock(root, 'connect-' + id); try { const saved = read<Connection | null>(connectionPath(root, id), null); if (saved && (generation === undefined || saved.generation === generation)) scopeLegacy(root, id, saved); } finally { unlock(); } }
   const c = loadConnection(root, id, generation);
+  if (authenticate(root, c.token).role !== 'agent') throw new Error('Unauthorized: connection holds an unscoped token; reconnect from the browser');
   const { createControlServer } = await import('./control.js');
   const http = createControlServer();
   await new Promise<void>((resolve, reject) => { http.once('error', reject); http.listen(0, '127.0.0.1', resolve); });
@@ -166,6 +182,8 @@ export function launchSpec(c: Connection) {
 }
 export async function launchFromBrowser(root: string, agent: string, token: string) {
   const actor = authenticate(root, token); hostFor(agent);
+  // A click header is forgeable by anything holding a token; opening a terminal on the person's desktop is not an agent action.
+  if (actor.role === 'agent') throw new Error('Forbidden: a connected agent cannot launch a host');
   const id = connectionId(agent, actor.id);
   // Bind identity before opening a terminal; the terminal never receives the member token.
   const c = await configureConnection(root, agent, token);
