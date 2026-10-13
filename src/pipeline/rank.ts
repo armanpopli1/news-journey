@@ -93,14 +93,6 @@ interface RoundupStoryPick {
   classificationNotes?: string[];
 }
 
-interface RoundupResponse {
-  dayHeadline: string;
-  angle: string;
-  stories: RoundupStoryPick[];
-  /** Next-best stories, strongest first: back-fill for a pick whose source cannot be read, and the person's swaps. */
-  alternates?: RoundupStoryPick[];
-}
-
 function candidatePick(item: RankedCandidate, i: number): RoundupStoryPick {
   return { headline: item.title, summary: item.summary, weight: i === 0 ? "lead" : "standard", sourceItemIds: [item.id], primaryUrl: item.url, suggestedScene: "news_card", principalEntity: item.title, area: "other", verticals: ["other"] };
 }
@@ -111,15 +103,18 @@ async function rankRoundup(fresh: HarvestItem[], cfg: PipelineConfig): Promise<T
   const citesCandidates = (s: { sourceItemIds: string[] }) => s.sourceItemIds.every(id => candidateIds.has(id));
   const altN = Math.max(0, Math.min(20, cfg.roundup.alternates ?? 2));
   const ordered = candidates.map(candidatePick);
-  const resp: RoundupResponse = { dayHeadline: `Roundup ${todayStamp()}: ${ordered[0]?.headline ?? "news"}`, angle: "Stories selected using your configured order.", stories: ordered.slice(0,cfg.roundup.minStories), alternates: ordered.slice(cfg.roundup.minStories,cfg.roundup.minStories+altN) };
+  // Candidates arrive already in the configured order: the first minStories are the slate, the next altN are
+  // spares. Picks past maxStories (only when minStories > maxStories) are demoted to spares ahead of those.
+  const picks = ordered.slice(0, cfg.roundup.minStories);
+  const spares = ordered.slice(cfg.roundup.minStories, cfg.roundup.minStories + altN);
   const withRealUrl = (s: RoundupStoryPick) => ({ ...s, primaryUrl: enforceRealUrl(s.primaryUrl, fresh.filter((it) => s.sourceItemIds.includes(it.id)), s.headline) });
-  const recommended = resp.stories.slice(0, cfg.roundup.maxStories).map(withRealUrl);
-  // Alternates the model offered (plus any picks past maxStories), each held to the same per-story rules; an invalid
-  // alternate is dropped here rather than failing the call — they are optional.
+  const recommended = picks.slice(0, cfg.roundup.maxStories).map(withRealUrl);
+  // Each spare is held to the same per-story rules as a pick; an invalid one is dropped here rather than failing
+  // the call, because spares are optional.
   const altProblem = (a: RoundupStoryPick) => !a?.headline || !a?.primaryUrl || !Array.isArray(a.sourceItemIds) || !a.sourceItemIds.length || !citesCandidates(a)
     || !["lead", "standard", "quick"].includes(a.weight) || !["news_card", "repo_card", "stat_chart"].includes(a.suggestedScene)
     || AGGREGATOR_RE.test(a.primaryUrl);
-  const alternates = [...resp.stories.slice(cfg.roundup.maxStories), ...(Array.isArray(resp.alternates) ? resp.alternates : [])]
+  const alternates = [...picks.slice(cfg.roundup.maxStories), ...spares]
     .filter((a) => !altProblem(a)).map(withRealUrl)
     .filter((a, i, all) => !recommended.some((r) => normalizeUrl(r.primaryUrl) === normalizeUrl(a.primaryUrl)) && all.findIndex((b) => normalizeUrl(b.primaryUrl) === normalizeUrl(a.primaryUrl)) === i)
     .slice(0, altN);
@@ -234,7 +229,7 @@ async function rankRoundup(fresh: HarvestItem[], cfg: PipelineConfig): Promise<T
     id,
     kind: "roundup",
     headline: dayHeadline,
-    angle: resp.angle,
+    angle: "Stories selected using your configured order.",
     sourceItems: allSourceItems,
     primaryUrl: stories[0].primaryUrl,
     repo: stories.find((s) => s.repo)?.repo ?? null,
