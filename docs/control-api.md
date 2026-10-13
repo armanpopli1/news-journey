@@ -5,7 +5,7 @@ The local browser starts with a one-page use case, one agent dropdown and six se
 The executive browser app starts with `node start.mjs` and serves `/journey` on an available loopback port. It reuses this API and the `/control` review console. `GET /v1/journey` returns safe settings; `GET /v1/engagement` returns viewer responses. Named `POST /v1/journey/<operation>` actions run in a selected workspace worker and normally return HTTP 202 with a job ID. Poll `GET /v1/journey/jobs/<id>` with the initiating member token. Send a unique `Idempotency-Key` for each deliberate action; an identical repeat returns the existing job and a conflicting payload returns 409. Job records omit submitted form data and credentials. `member-add` returns its one-time token directly. Upload actions accept at most 8 MiB JSON (5 MiB image); other forms accept 32 KiB. See [journey contract](executive-onboarding.md) and [engagement actions](engagement.md).
 
 
-Implemented 2026-09-07. The production engine stays a single publication. The distributable harness adds isolated workspaces, roles and editorial desks. Both expose the same local control and provider contracts.
+Implemented 2026-09-07. The production engine stays a single publication. The distributable harness adds isolated workspaces, roles and editorial desks. Both expose the same local control and provider contracts. A connected AI agent authenticates with a scoped `agent` credential issued when the member connects it; it acts under that member's id with the intersection of agent-permitted actions (read, draft, configure) and the member's current role and desks, and it is not an invitable role.
 
 ## Run
 

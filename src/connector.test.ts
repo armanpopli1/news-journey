@@ -290,7 +290,7 @@ test('the repository plugin binds itself on first launch and serves a real harne
     for (const file of readFileSync(join(CODE_ROOT, 'plugins/content-harness/bin/serve.mjs'), 'utf8').split('\n')) assert.doesNotMatch(file, /[a-f0-9]{64}/);
     // First launch binds; a second launch reuses the same connection and generation; no agent settings file is touched.
     const first = selfServeConnection(f.root, 'claude', owner), again = selfServeConnection(f.root, 'claude', owner);
-    assert.equal(first.selfServe, true); assert.equal(again.id, first.id); assert.equal(again.generation, first.generation); assert.equal(first.config, undefined); assert.equal(first.plugin, undefined);
+    assert.notEqual(first.token, owner); assert.equal(first.selfServe, true); assert.equal(again.id, first.id); assert.equal(again.generation, first.generation); assert.equal(first.config, undefined); assert.equal(first.plugin, undefined);
     const client = new Client({ name: 'Plugin fixture', version: '1.0.0' });
     const transport = new StdioClientTransport({ command: process.execPath, args: [join(CODE_ROOT, 'plugins/content-harness/bin/serve.mjs')], env: { ...process.env, CONTENT_HARNESS_ROOT: CODE_ROOT, CLAUDE_PLUGIN_ROOT: join(CODE_ROOT, 'plugins/content-harness'), HARNESS_WORKSPACE: f.workspace, HARNESS_TOKEN: owner }, stderr: 'pipe' });
     let diagnostic = ''; transport.stderr?.on('data', chunk => { diagnostic = (diagnostic + chunk).slice(-2000); });

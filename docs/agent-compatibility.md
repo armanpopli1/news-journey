@@ -39,7 +39,7 @@ To disconnect and restore the harness-owned configuration entry:
 node connect.mjs <agent> --workspace <id> --restore
 ```
 
-The launcher preserves a backup and checks ownership before restoring configuration. Do not overwrite unrelated agent settings to resolve a conflict. Revoking or superseding a connection removes its authority; access is also constrained by current workspace membership.
+The launcher preserves a backup and checks ownership before restoring configuration. Do not overwrite unrelated agent settings to resolve a conflict. Revoking or superseding a connection removes its authority; access is also constrained by current workspace membership. A connected agent holds its own scoped `agent` credential, never the member's token: disconnecting deletes it, disabling or demoting the member who connected it stops it on the next call, and it can configure, draft and read but never publish, approve, change automation or manage access or credentials, even if it presents a browser-click header.
 
 ## Host and writer boundaries
 
