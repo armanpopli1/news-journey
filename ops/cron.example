@@ -1,0 +1,10 @@
+# News Journey nightly text-only edition (Linux, or any host where the writer CLI's login works without a desktop session).
+# Install with `crontab -e` after replacing the two paths. On macOS use ops/launchd instead: the Claude CLI keeps its login
+# in the Keychain, which cron jobs cannot reach.
+#
+# cron's PATH is minimal. Put a Node 22 `node`/`npm` and the writer CLI (claude, codex or grok) on it, as below.
+# Reading the log is the failure signal: the command exits non-zero on any failed stage and prints
+# `newsletter.md:` and `newsletter.html:` lines on success.
+#
+# m  h  dom mon dow  command
+30   7  *   *   *    cd /path/to/news-journey && PATH=/path/to/node22/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin npm run produce -- --text-only >> $HOME/news-journey-text-edition.log 2>&1

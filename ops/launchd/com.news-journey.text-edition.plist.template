@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Nightly text-only edition: sources, script and newsletter.md/.html at 07:30, nothing approved or published.
+     Render with `node ops/render-schedule.mjs`; it fills the double-underscore placeholders from the Node that runs it, so run that command with Node 22.
+     Install as a per-user LaunchAgent (not a LaunchDaemon) so the job can read your CLI login. See README, "Text-only edition". -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.news-journey.text-edition</string>
+  <key>ProgramArguments</key><array>
+    <string>__NODE__</string><string>--import</string><string>tsx</string>
+    <string>__PROJECT_ROOT__/src/cli.ts</string><string>produce</string><string>--text-only</string>
+  </array>
+  <key>WorkingDirectory</key><string>__PROJECT_ROOT__</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>__NODE_DIR__:__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer></dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/news-journey-text-edition.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/news-journey-text-edition.log</string>
+</dict></plist>

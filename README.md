@@ -85,6 +85,17 @@ npm run produce -- --text-only
 
 Runs sources → stories → script → newsletter and stops there. It never waits for a story choice, so `ranking.mode` in `config/sources.json` must be `newest` or `priorities` (the stock `manual` mode is refused up front). It writes `newsletter.md` and `newsletter.html` into the edition's package folder (`workdir/videos/<id>/`, the paths are printed) next to a `text-only-receipt.json`, and marks the package `text_ready`: a preview for you to read and deliver yourself. It does not approve, post or publish anything, does not appear in `npm run review`, and cannot be picked up by a later media run. A second run on the same day returns the files it already made instead of writing again. Any failure exits non-zero. `--dry-run` stops after story selection like every other dry run.
 
+#### Run it nightly
+
+The text-only command is built to be scheduled: it needs no one at the keyboard, it exits non-zero on any failed stage, and on success it prints the two output paths. You then read and deliver the result yourself.
+
+1. Node 22 on `PATH` (the scheduler's `PATH` is not your shell's) and the writer CLI installed and logged in once by hand: `claude` for Claude Code, then `npm run model:check` to prove the saved login answers. Set the writer to Claude in Settings (or `AI_CONTENT_MODEL_PROVIDER=claude`).
+2. `ranking.mode` in `config/sources.json` set to `newest` or `priorities`, and your trusted feeds listed in your brief. Run `npm run produce -- --text-only` once in a terminal and read the preview before scheduling anything.
+3. macOS: `node ops/render-schedule.mjs > ~/Library/LaunchAgents/com.news-journey.text-edition.plist` (not `npm run`, whose banner would land in the file), then `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.news-journey.text-edition.plist`. It runs at 07:30 and logs to `~/Library/Logs/news-journey-text-edition.log`. Run the renderer with the Node 22 you want scheduled and render again after upgrading Node. Keep the repository outside Desktop, Documents and Downloads, or launchd cannot read it without Full Disk Access. Linux or other hosts: `ops/cron.example` has the line. On macOS cron cannot read the Claude CLI's Keychain login, so use launchd there.
+4. The machine must be awake and logged in at 07:30. A Mac that sleeps through the time runs the job when it wakes; `sudo pmset repeat wakeorpoweron MTWRFSU 07:25:00` wakes it just before.
+
+A scheduled run that fails leaves its package marked `failed:<stage>` and exits non-zero; the log has the reason. Check `launchctl print gui/$(id -u)/com.news-journey.text-edition` for the last exit status, and read the log, because an installed schedule is not a successful run. The Windows task template still runs only the synthetic `npm run dry-run`.
+
 ## Writers
 
 Bring the account you already have. The Free edition offers the four writers that have each produced a finished edition from a plain brief on a fresh workspace.
