@@ -19,6 +19,11 @@ import { hasMeasuredModelIdentity, type ModelIdentity } from '../llm/model-ident
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const bytesHash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+/** Writers the live preview accepts. Claude is allowed because its editorial calls already run with every tool
+ * disabled (invokeClaude: --safe-mode, --tools ""), the same no-tool, no-browse boundary as the other account-backed CLIs. */
+export const LIVE_EDITION_PROVIDERS: readonly string[] = ['ollama', 'opencode', 'codex', 'grok', 'claude'];
+/** Account-backed CLI writers can hold the whole evidence packet; local models are held to a small one. */
+export const liveEvidenceBytes = (provider: string): number => ['codex', 'grok', 'claude'].includes(provider) ? 131072 : 24000;
 export interface LiveEditionOptions {
   runId: string; day: string; brief: string; topics: string[]; feeds: Feed[];
   writer: ModelConfig; reviewer: ModelConfig;
@@ -126,14 +131,14 @@ export async function runLiveEdition(options: LiveEditionOptions) {
   let writerRuntime: ModelRuntime, reviewerRuntime: ModelRuntime;
   const expectedModel = (runtime: ModelRuntime) => {
     if (!runtime.model) throw new Error('Pin an explicit model name for each writing and review route');
-    if (!['ollama', 'opencode', 'codex', 'grok'].includes(runtime.provider)) throw new Error('Live beta currently requires an installed local model or an account-backed Codex/Grok CLI');
+    if (!LIVE_EDITION_PROVIDERS.includes(runtime.provider)) throw new Error('Live beta currently requires an installed local model or an account-backed Claude/Codex/Grok CLI');
     if (runtime.provider === 'grok' && !runtime.command) throw new Error('Choose the account-backed Grok CLI explicitly');
     return runtime;
   };
   try {
     writerRuntime = resolveModelRuntime(writer, {}); reviewerRuntime = resolveModelRuntime(reviewer, {});
     expectedModel(writerRuntime); expectedModel(reviewerRuntime);
-    // Writing and source QA are separate calls; the owner may select Codex for both.
+    // Writing and source QA are separate calls; the owner may select the same account-backed CLI (Claude, Codex) for both.
     const hashes = sourceHashes();
     const suppliedEvidence = options.preparedEvidencePath ? readFileSync(contained(root, options.preparedEvidencePath), 'utf8') : undefined;
     const suppliedNewsletter = options.providedNewsletterPath ? readFileSync(contained(root, options.providedNewsletterPath), 'utf8') : undefined;
@@ -245,7 +250,7 @@ export async function runLiveEdition(options: LiveEditionOptions) {
       const written = await runDailyEditorial(input, { writer: route(writer, writerRuntime, 'writer'), reviewer: route(reviewer, reviewerRuntime, 'reviewer'),
         ...(suppliedNewsletter ? { providedNewsletter: JSON.parse(suppliedNewsletter) } : {}),
         requireCorroboration: options.requireCorroboration === true,
-        maxEvidenceBytes: ['codex', 'grok'].includes(writerRuntime.provider) ? 131072 : 24000,
+        maxEvidenceBytes: liveEvidenceBytes(writerRuntime.provider),
         checkpoint: existsSync(checkpointPath) ? JSON.parse(readFileSync(checkpointPath, 'utf8')) : undefined,
         save: checkpoint => atomicJson(checkpointPath, checkpoint) });
       atomicJson(join(output, 'newsletter.json'), written.newsletter);

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync, rmSync, symlinkSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { verifyPreparedLiveEvidence } from './live-edition.js';
+import { verifyPreparedLiveEvidence, LIVE_EDITION_PROVIDERS, liveEvidenceBytes } from './live-edition.js';
 import { readableWebText } from '../sources/web-discovery.js';
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
 const day = '2026-09-15', brief = 'Review the captured article.';
@@ -77,4 +77,11 @@ test('original numeric timezone offsets and raw.html capture filenames keep thei
     writeFileSync(f.capturePath, JSON.stringify({ ...f.receipt, publishedAt: '2026-09-15T21:00:00Z' }));
     assert.throws(() => verifyPreparedLiveEvidence(f.root, f.supplied, { day, brief }), /publication date does not match/);
   } finally { f.close(); }
+});
+
+test('the live preview accepts the Claude CLI like the other account-backed writers, with the large evidence allowance', () => {
+  for (const provider of ['claude', 'codex', 'grok', 'ollama', 'opencode']) assert.ok(LIVE_EDITION_PROVIDERS.includes(provider), provider);
+  for (const provider of ['gemini', 'zai', 'openai-compatible', 'bedrock', 'antigravity']) assert.ok(!LIVE_EDITION_PROVIDERS.includes(provider), provider + ' stays outside the live beta');
+  assert.equal(liveEvidenceBytes('claude'), liveEvidenceBytes('codex'));
+  assert.ok(liveEvidenceBytes('claude') > liveEvidenceBytes('ollama'));
 });
