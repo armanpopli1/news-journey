@@ -23,8 +23,14 @@ if (!existsSync(join(root, 'node_modules/tsx'))) {
 // Claude Code exposes CLAUDE_PLUGIN_ROOT to plugin servers; anything else is treated as Codex unless overridden.
 const agent = process.env.CONTENT_HARNESS_AGENT || (process.env.CLAUDE_PLUGIN_ROOT ? 'claude' : 'codex');
 const workspace = process.env.HARNESS_WORKSPACE || 'default';
+// The agent host starts this server with its own environment, which on a developer machine carries
+// cloud, source-control and provider credentials the harness never needs. Pass the child only what
+// it takes to find Node, the home directory and the harness settings; the writer CLIs re-read their
+// own saved logins from HOME.
+const PASS_THROUGH = ['PATH', 'HOME', 'USER', 'LOGNAME', 'USERNAME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'XDG_CONFIG_HOME', 'CLAUDE_CONFIG_DIR', 'CLAUDE_PLUGIN_ROOT', 'CONTENT_HARNESS_ROOT', 'CONTENT_HARNESS_AGENT', 'HARNESS_IDENTITY_FILE'];
+const env = Object.fromEntries(PASS_THROUGH.filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
 const child = spawn(process.execPath, [join(root, 'connect.mjs'), agent, '--workspace', workspace, '--serve-self'], {
-  cwd: root, stdio: 'inherit', env: { ...process.env, HARNESS_WORKSPACE: workspace },
+  cwd: root, stdio: 'inherit', env: { ...env, HARNESS_WORKSPACE: workspace },
 });
 child.once('error', error => { console.error(error.message); process.exit(1); });
 child.once('exit', code => process.exit(code ?? 1));
