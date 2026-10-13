@@ -344,11 +344,12 @@ export async function rank(harvestPath?: string, count?: number, formatOverride?
   const cfg = loadConfig<PipelineConfig>("pipeline");
   const format = (formatOverride as PipelineConfig["format"]) ?? cfg.format ?? "roundup";
 
+  // Only an identical URL already previewed or posted inside the window is dropped here. Harvest URLs and
+  // repository activity are otherwise discovery metadata, not event identity; same-event comparison waits
+  // for complete source-backed story packets (memory/runtime.ts).
   let fresh = filterCovered(harvest.items, cfg.dedupWindowDays);
-  // Harvest URLs and repository activity are discovery metadata, not event identity.
-  // Preserve candidates until complete source-backed story packets can be compared.
 
-  log(`Ranking ${fresh.length}/${harvest.items.length} items (after exact + cross-pipeline dedup), format=${format}`);
+  log(`Ranking ${fresh.length}/${harvest.items.length} items (after dropping links already covered in the last ${cfg.dedupWindowDays} days), format=${format}`);
   if (fresh.length === 0) throw new Error("Nothing new to cover after dedup");
 
   return format === "roundup"

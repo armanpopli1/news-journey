@@ -328,7 +328,8 @@ export interface LedgerEntry {
   urls: string[];
   repo: string | null;
   coveredAt: string;
-  status: "selected" | "posted" | "rejected";
+  /** "previewed": the edition reached review, so the person has seen these stories whether or not this tool delivers them. */
+  status: "selected" | "previewed" | "posted" | "rejected";
   posts: Partial<Record<Platform, string>>;
 }
 
