@@ -4,6 +4,8 @@ Each workspace keeps its publication preferences and starts each edition with fr
 
 A shared company, buzzword or website does not make two articles the same story. The harness compares complete source-backed event packets with verified published history. A confirmed matching event can hold the preview and explain the earlier edition. Different events, material developments and uncertain matches remain eligible. Incomplete historical records do not become automatic exclusions.
 
+Before any of that, `dedupWindowDays` in `config/pipeline.json` (default 30) drops one narrow case from the harvest: a candidate whose exact link, ignoring tracking parameters, fragment, host case and a trailing slash, already appeared in an edition that reached review or was posted inside the window. An edition counts as covered once it is ready for review, because a person who sends the text by email or Slack themselves never produces a delivery receipt. A draft that was only selected, failed, or was rejected does not count. The same article is not the same event, so a different link about a covered story, or any link that merely shares a company or repository, stays eligible for the event comparison above.
+
 Memory uses local SQLite under `state/memory/memory.sqlite`, separated by the authenticated workspace and publication. Node.js 22.13 or newer is required. There is no required memory subscription, vector database or hosted model. Filesystem access remains the local trust boundary; do not expose the local server to the internet.
 
 ## Inspect and correct
