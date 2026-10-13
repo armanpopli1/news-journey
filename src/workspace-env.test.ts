@@ -34,3 +34,26 @@ test('reloading a saved writer removes old workspace overrides in the same worke
     Object.assign(process.env, before);
   }
 });
+
+test('a workspace .env cannot set process-loader or harness keys', () => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-env-'));
+  const before = { ...process.env };
+  try {
+    writeFileSync(join(root, 'workspace.json'), '{}');
+    writeFileSync(join(root, '.env'), [
+      'NODE_OPTIONS=--require /tmp/evil.js', 'DYLD_INSERT_LIBRARIES=/tmp/evil.dylib', 'LD_PRELOAD=/tmp/evil.so',
+      'PATH=/tmp/evil', 'HARNESS_TOKEN=forged', 'GEMINI_API_KEY=allowed-provider-key', '',
+    ].join('\n'));
+    loadWorkspaceEnv(root);
+    assert.equal(process.env.NODE_OPTIONS, before.NODE_OPTIONS);
+    assert.equal(process.env.DYLD_INSERT_LIBRARIES, before.DYLD_INSERT_LIBRARIES);
+    assert.equal(process.env.LD_PRELOAD, before.LD_PRELOAD);
+    assert.equal(process.env.PATH, before.PATH);
+    assert.equal(process.env.HARNESS_TOKEN, before.HARNESS_TOKEN);
+    assert.equal(process.env.GEMINI_API_KEY, 'allowed-provider-key');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key];
+    Object.assign(process.env, before);
+  }
+});

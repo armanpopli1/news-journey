@@ -211,6 +211,8 @@ export function assetPath(value: string, root = activeRoot()): string {
 }
 const loadedWorkspaceEnvKeys = new Set<string>();
 const protectedEnvKey = (key: string) => key.startsWith("HARNESS_") || ["PATH", "HOME", "USERPROFILE", "SystemRoot"].includes(key);
+/** Keys that change how Node or the OS loader runs the next process; a workspace .env may not set them. */
+export const LOADER_ENV_KEY = /^(NODE_OPTIONS|NODE_PATH|NODE_REPL_EXTERNAL_MODULE|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_[A-Z_]+|PATHEXT|ComSpec|PYTHONPATH|PYTHONSTARTUP|UV_[A-Z_]+)$/;
 export function loadWorkspaceEnv(root = activeRoot()): void {
   const file = contained(root, ".env");
   if (isWorkspace(root)) {
@@ -224,8 +226,13 @@ export function loadWorkspaceEnv(root = activeRoot()): void {
     }
     if (existsSync(file)) {
       const values = parseEnv(readFileSync(file, "utf8"));
+      for (const key of Object.keys(values)) {
+        // A workspace .env holds provider keys, never process-level loader settings: NODE_OPTIONS,
+        // PATH or a dynamic-linker preload would change which code every child process runs.
+        if (protectedEnvKey(key) || LOADER_ENV_KEY.test(key)) { delete values[key]; continue; }
+        loadedWorkspaceEnvKeys.add(key);
+      }
       Object.assign(process.env, values);
-      for (const key of Object.keys(values)) loadedWorkspaceEnvKeys.add(key);
     }
   } else if (existsSync(file)) process.loadEnvFile(file);
 }
