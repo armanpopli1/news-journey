@@ -39,3 +39,14 @@ test('a structurally valid substitute storyboard cannot pass the author or cache
   assert.match(diagramConceptProblem(diagram.svg, { ...concept, labels: ['Pilot', 'City'] })!, /changed/);
   assert.match(diagramConceptProblem(diagram.svg, { ...concept, labels: ['City', 'Pilot', 'Outcome'] })!, /every independently/);
 });
+
+test('a comment or CDATA section cannot ride through the element-only allowlist into the HTML renderer', () => {
+  // cheerio's XML mode reads `<!--><img/src/onerror=…>-->` as one comment; the browser's HTML parser
+  // closes the comment at `<!-->` and builds a live <img> whose onerror runs. The validator must see
+  // every node, not only elements.
+  const smuggle = (inner: string) => ({ ...diagram, svg: diagram.svg.replace('</svg>', `${inner}</svg>`) });
+  assert.equal(diagramValidationProblem(smuggle('<!--><img/src/onerror=alert(1)>-->'), 1), 'SVG comments are forbidden');
+  assert.equal(diagramValidationProblem(smuggle('<!-- harmless note -->'), 1), 'SVG comments are forbidden');
+  assert.equal(diagramValidationProblem(smuggle('<text><![CDATA[<img src=x onerror=alert(1)>]]></text>'), 1), 'SVG CDATA sections are forbidden');
+  assert.equal(diagramValidationProblem(diagram, 1), null, 'the unmodified diagram still passes');
+});

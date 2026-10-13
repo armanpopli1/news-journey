@@ -22,6 +22,7 @@
  * It cannot be out-argued by a new mechanism because it never reasons about mechanisms.
  */
 import type { DiagramStyle } from "./diagram-style.js";
+import { isolateRenderPage } from "./render-page.js";
 
 /** WCAG AA for normal text. Below this a label is reported but does not block. */
 export const CONTRAST_TARGET = 4.5;
@@ -174,7 +175,7 @@ export async function measureDiagramContrast(
   try {
     // Tall viewport: hit-testing uses elementFromPoint, which only sees what is inside the viewport.
     // A short viewport silently reports "nothing behind this label" and the gate passes everything.
-    const page = await browser.newPage({ viewport: { width: 1200, height: 20000 } });
+    const page = await isolateRenderPage(await browser.newPage({ viewport: { width: 1200, height: 20000 } }));
     await page.setContent(
       `<!doctype html><meta charset="utf-8">
 <style>

@@ -7,6 +7,7 @@ import { log } from "../util.js";
 import type { NewsletterData } from "./newsletter-html.js";
 import { DIAGRAM_CSS, ROUGH_FILTER_DEFS, diagramStyleForDay, withMotionPackets, type DiagramStyle } from "./diagram-style.js";
 import { SCHEMATIC_CSS } from "./story-schematic.js";
+import { isolateRenderPage } from "./render-page.js";
 
 /** Wide enough that LinkedIn's article column does not upscale it; 2x for retina. */
 const WIDTH = 1200;
@@ -47,7 +48,7 @@ export async function renderDiagramShot(
   const browser = await chromium.launch();
   const deadline = setTimeout(() => { void browser.close(); }, 30_000);
   try {
-    const page = await browser.newPage({ viewport: { width: o.width, height: 900 }, deviceScaleFactor: 1 });
+    const page = await isolateRenderPage(await browser.newPage({ viewport: { width: o.width, height: 900 }, deviceScaleFactor: 1 }));
     let html = diagramShotHtml(svg, o);
     if (o.context) {
       const esc = (v: string) => v.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -96,10 +97,10 @@ export async function renderDiagramPngs(
   const paths: string[] = [];
   const browser = await chromium.launch();
   try {
-    const page = await browser.newPage({
+    const page = await isolateRenderPage(await browser.newPage({
       viewport: { width: WIDTH, height: 900 },
       deviceScaleFactor: SCALE,
-    });
+    }));
     for (const [i, story] of stories.entries()) {
       const n = i + 1;
       const plan = story.diagram?.visual;

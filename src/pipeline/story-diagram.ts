@@ -165,6 +165,22 @@ export function diagramValidationProblem(raw: unknown, n: number): string | null
   const $=load(svg,{xmlMode:true});
   const tags=new Set(["svg","title","desc","g","text","tspan","path","rect","circle","ellipse","line","polygon","polyline"]);
   const attrs=new Set(["class","id","viewBox","role","aria-labelledby","aria-label","data-visual-primitive","data-step","x","y","x1","x2","y1","y2","cx","cy","rx","ry","r","width","height","d","points","transform","text-anchor","dominant-baseline","dx","dy","fill","stroke","stroke-width","stroke-dasharray","fill-opacity","textLength","lengthAdjust","style"]);
+  // `$("*")` yields elements only. Comments, CDATA sections and processing instructions never reach
+  // the loop, yet the same string is later parsed as HTML by the renderer, where `<!-->` closes a
+  // comment at once and whatever follows becomes live markup. Walk every node, not just elements.
+  const nonElement = (nodes: readonly { type: string; children?: unknown }[]): string | null => {
+    for (const node of nodes) {
+      if (node.type === "comment") return "SVG comments are forbidden";
+      if (node.type === "cdata") return "SVG CDATA sections are forbidden";
+      if (node.type === "directive") return "SVG declarations are forbidden";
+      if (node.type !== "tag" && node.type !== "text") return `SVG contains a forbidden ${node.type} node`;
+      const found = Array.isArray(node.children) ? nonElement(node.children as { type: string; children?: unknown }[]) : null;
+      if (found) return found;
+    }
+    return null;
+  };
+  const nodeProblem = nonElement($.root()[0].children as { type: string; children?: unknown }[]);
+  if (nodeProblem) return nodeProblem;
   for(const element of $("*").toArray()){
     if(!("tagName" in element))return "SVG contains a non-element node";
     if(!tags.has(element.tagName))return `forbidden SVG element: ${element.tagName}`;

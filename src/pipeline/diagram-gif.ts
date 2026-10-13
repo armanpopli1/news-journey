@@ -1,4 +1,5 @@
 import { visualMediaProblem } from "./visual-media.js";
+import { isolateRenderPage } from "./render-page.js";
 import { writeFileSync, renameSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { chromium } from "playwright";
@@ -59,7 +60,7 @@ export async function renderDiagramGifs(
   const out: Array<{ gif: string; frame0: string }> = [];
   const browser = await chromium.launch();
   try {
-    const page = await browser.newPage({ viewport: { width: GIF_WIDTH, height: 700 }, deviceScaleFactor: 1 });
+    const page = await isolateRenderPage(await browser.newPage({ viewport: { width: GIF_WIDTH, height: 700 }, deviceScaleFactor: 1 }));
     for (const [i, story] of stories.entries()) {
       const n = i + 1;
       const plan = story.diagram?.visual;
