@@ -6,18 +6,21 @@ import { dirname, join, resolve, relative, isAbsolute } from "node:path";
 import { parseEnv } from "node:util";
 import { homedir, userInfo } from "node:os";
 import { fileURLToPath } from "node:url";
+import { waitForReleaseLock } from "./release-lock.js";
 
 export const CODE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-export const ROLES = ["owner", "admin", "editor", "reviewer", "viewer"] as const;
+// "agent" is never granted by an invite: it is the scoped credential a connected AI agent (MCP) holds on behalf of the member who connected it.
+export const ROLES = ["owner", "admin", "editor", "reviewer", "viewer", "agent"] as const;
 export type Role = typeof ROLES[number];
-export type Action = "read" | "produce" | "approve" | "publish" | "manage" | "delete";
+// "configure" is the slice of "manage" a connected agent may use: publication, editorial, narration and personalization settings. Credentials, access, automation and publishing stay "manage"/"publish".
+export type Action = "read" | "produce" | "approve" | "publish" | "manage" | "configure" | "delete";
 export interface Actor { id: string; role: Role }
-export interface Member extends Actor { tokenHash: string; disabled?: boolean; desks?: string[] }
+export interface Member extends Actor { tokenHash: string; disabled?: boolean; desks?: string[]; issuer?: string }
 export interface Desk { editions: string[]; channels: string[]; twoPersonRule?: boolean }
 export type Desks = Record<string, Desk>;
 const ROLES_FOR: Record<Action, readonly Role[]> = {
-  read: ROLES, produce: ["owner", "admin", "editor"], approve: ["owner", "admin", "reviewer"],
-  publish: ["owner", "admin"], manage: ["owner", "admin"], delete: ["owner"],
+  read: ROLES, produce: ["owner", "admin", "editor", "agent"], approve: ["owner", "admin", "reviewer"],
+  publish: ["owner", "admin"], manage: ["owner", "admin"], configure: ["owner", "admin", "agent"], delete: ["owner"],
 };
 export function safeId(value: string): string {
   if (typeof value !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,159}$/.test(value)) throw new Error("Invalid identifier");
@@ -71,7 +74,12 @@ export function authenticate(root: string, token: string): Member {
   const digest = Buffer.from(hash(token), "hex");
   const member = members(root).find((m) => !m.disabled && /^[a-f0-9]{64}$/.test(m.tokenHash) && timingSafeEqual(Buffer.from(m.tokenHash, "hex"), digest));
   if (!member || !ROLES.includes(member.role)) throw new Error("Unauthorized");
-  return member;
+  if (member.role !== "agent") return member;
+  // The agent acts under its issuer's id, so jobs, authorship and two-person checks attribute to the human, but keeps role
+  // "agent". Its authority is the issuer's live membership: disable or demote the issuer and the agent token stops working.
+  const issuer = members(root).find((m) => m.id === member.issuer);
+  if (!issuer || issuer.disabled || issuer.role === "agent" || !ROLES.includes(issuer.role)) throw new Error("Unauthorized");
+  return { ...member, id: issuer.id };
 }
 function identityPath(): string { return process.env.HARNESS_IDENTITY_FILE || join(homedir(), ".content-harness", "identity.json"); }
 export function localToken(root: string): string { return process.env.HARNESS_TOKEN ?? read<Record<string, string>>(identityPath(), {})[hash(resolve(root))] ?? ""; }
@@ -88,10 +96,18 @@ export function authorize(action: Action, opts: { root?: string; actor?: Actor; 
   assertEvaluationAction(root, action);
   const actor = opts.actor ?? currentActor(root);
   if (!ROLES_FOR[action].includes(actor.role)) throw new Error(`Forbidden: ${actor.role} cannot ${action}`);
+  // An agent holds the intersection of what agents may do and what its issuer may do right now, under the issuer's desks.
+  let role: Role = actor.role;
+  if (actor.role === "agent") {
+    const issuer = members(root).find((m) => m.id === actor.id && !m.disabled && m.role !== "agent");
+    if (!issuer) throw new Error("Unauthorized");
+    role = issuer.role;
+    if (!ROLES_FOR[action].includes(role)) throw new Error(`Forbidden: an agent connected by ${role} cannot ${action}`);
+  }
   const deskName = opts.edition ? deskFor(opts.edition, root) : undefined;
   const desk = deskName ? desks(root)[deskName] : undefined;
   const member = members(root).find((m) => m.id === actor.id);
-  if (isWorkspace(root) && ["produce", "approve"].includes(action) && !["owner", "admin"].includes(actor.role)) {
+  if (isWorkspace(root) && ["produce", "approve"].includes(action) && !["owner", "admin"].includes(role)) {
     if (!opts.edition || !deskName || !member?.desks?.includes(deskName)) throw new Error("Forbidden: edition is outside your assigned desks");
   }
   if (action === "approve" && desk?.twoPersonRule && (!opts.author || opts.author === actor.id)) throw new Error("Independent reviewer required; author cannot approve this package");
@@ -153,7 +169,7 @@ export function createWorkspace(slug: string, migrate = false, codeRoot = CODE_R
 export function issueMember(root: string, id: string, role: Role, assignedDesks: string[] = []): string {
   const actor = authorize("manage", { root });
   safeId(id);
-  if (!ROLES.includes(role) || role === "owner") throw new Error("Use admin/editor/reviewer/viewer; ownership cannot be granted by an invite");
+  if (!ROLES.includes(role) || role === "owner" || role === "agent") throw new Error("Use admin/editor/reviewer/viewer; ownership and agent credentials cannot be granted by an invite");
   if (assignedDesks.some((d) => !desks(root)[d])) throw new Error("Unknown desk");
   const rows = members(root);
   if (rows.some((m) => m.id === id)) throw new Error("Member already exists");
@@ -167,8 +183,35 @@ export function updateMember(root: string, id: string, patch: { role?: Role; dis
   const rows = members(root); const member = rows.find((m) => m.id === id);
   if (!member || member.role === "owner" || patch.role === "owner") throw new Error("Owner membership is protected");
   if (patch.role && !ROLES.includes(patch.role)) throw new Error("Unknown role");
+  if (patch.role === "agent" || member.role === "agent" && (patch.role !== undefined || patch.desks !== undefined)) throw new Error("An agent credential follows its issuer; disable it or disconnect the agent");
   if (patch.desks?.some((d) => !desks(root)[d])) throw new Error("Unknown desk");
   Object.assign(member, patch); atomicJson(memberPath(root), rows);
+}
+/**
+ * The credential a connected agent holds instead of its issuer's own token. The row is `connection-<id>` with role "agent" and an
+ * `issuer`; authenticate() resolves it to the issuer's id and authorize() intersects it with the issuer's live role. A connection
+ * is single-holder, so re-issuing replaces the previous token.
+ */
+export function issueAgentToken(root: string, issuer: Actor, connectionId: string): string {
+  if (issuer.role === "agent") throw new Error("An agent cannot connect another agent");
+  const id = "connection-" + safeId(connectionId);
+  const unlock = waitForReleaseLock(root, "members");
+  try {
+    const rows = members(root);
+    if (!rows.some((m) => m.id === issuer.id && m.role !== "agent" && !m.disabled)) throw new Error("Unauthorized");
+    if (rows.some((m) => m.id === id && m.role !== "agent")) throw new Error("Member already exists");
+    const token = randomBytes(32).toString("hex");
+    atomicJson(memberPath(root), [...rows.filter((m) => m.id !== id), { id, role: "agent", issuer: issuer.id, tokenHash: hash(token) }]);
+    return token;
+  } finally { unlock(); }
+}
+export function revokeAgentToken(root: string, connectionId: string): void {
+  const id = "connection-" + safeId(connectionId);
+  const unlock = waitForReleaseLock(root, "members");
+  try {
+    const rows = members(root);
+    if (rows.some((m) => m.id === id && m.role === "agent")) atomicJson(memberPath(root), rows.filter((m) => m.id !== id));
+  } finally { unlock(); }
 }
 export function saveDesk(root: string, id: string, desk: Desk): void {
   authorize("manage", { root }); safeId(id);

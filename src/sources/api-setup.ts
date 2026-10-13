@@ -85,7 +85,7 @@ export function recordFields(value: unknown, path = "", depth = 0): { path: stri
 }
 
 export async function connectApi(root: string, endpoint: PublicApiEndpointConfig, request?: Requester, credential?: { name: string; value: string }, managed = false): Promise<number> {
-  authorize("manage", { root });
+  authorize(credential ? "manage" : "configure", { root });
   const quote = credential && ["'", '"', "`"].find(q => !credential.value.includes(q));
   if (credential && (!/^[A-Z][A-Z0-9_]*$/.test(credential.name) || /[\r\n]/.test(credential.value) || !quote)) throw new Error("Unsupported API credential format; use a single-line header value");
   const items = await fetchConfiguredPublicApis({ endpoints: [endpoint] }, request);
@@ -133,7 +133,7 @@ function saveReport(root: string, report: DiscoveryReport): void {
 }
 
 export async function setupApiSources(root = activeRoot(), options: { automatic?: boolean; refresh?: boolean; select?: string[]; entries?: PublicApiCatalogEntry[]; request?: Requester } = {}): Promise<DiscoveryReport> {
-  authorize("manage", { root });
+  authorize("configure", { root });
   const cfg = read<any>(contained(root, "config/sources.json"), {});
   const topics: string[] = cfg.editorial?.preferredTopics ?? [];
   const areas: string[] = cfg.editorial?.areas?.focusAreas?.filter((v: string) => v !== "other" && !topics.includes(v)) ?? [];

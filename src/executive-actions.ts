@@ -41,6 +41,7 @@ import { matchCatalog, readCatalog } from './sources/catalog.js';
 import { matchTopicApis } from './sources/api-setup.js';
 import { safePublicUrl } from './sources/public-apis.js';
 import { newsletterKeyFor } from './newsletter-key.js';
+import { agentSetupSchema, personalizeSchema } from './journey-guidance.js';
 /** The pipeline's own ERROR line in plain words, never the node command that ran it. */
 function plainCommandError(error: unknown, root?: string): Error {
   const text = String((error as { stderr?: string }).stderr || '') + String((error as { stdout?: string }).stdout || '');
@@ -341,9 +342,11 @@ export function executiveState(root: string, role: string, actorId?: string) {
   };
 }
 
-export function executivePermission(operation: string): 'read' | 'manage' | 'produce' | 'publish' {
+export function executivePermission(operation: string): 'read' | 'manage' | 'configure' | 'produce' | 'publish' {
   if (operation === 'linkedin-workbench') return 'produce';
-  if (['linkedin-context', 'linkedin-reader-settings'].includes(operation)) return 'manage';
+  // "configure" is "manage" for people; it is also what a connected agent may do (its harness_configure/personalize/sources/linkedin-context tools).
+  if (['publication', 'editorial', 'media', 'sources', 'personalize', 'linkedin-context'].includes(operation)) return 'configure';
+  if (operation === 'linkedin-reader-settings') return 'manage';
   if (operation === 'quick-preview') return 'manage';
   if (operation === 'automation') return 'publish'; // switching on unattended approval and publishing needs the publish role
   if ((PERSONAL_PROFILE_ACTIONS as readonly string[]).includes(operation)) return 'manage';
@@ -354,7 +357,7 @@ export function executivePermission(operation: string): 'read' | 'manage' | 'pro
   if (['draft', 'visual-choice', 'story-choice'].includes(operation)) return 'produce';
   if (['publish-newsletter', 'post-video', 'link-video'].includes(operation)) return 'publish';
   if (['dashboard'].includes(operation)) return 'read';
-  if (['newsletter-settings', 'personalize', 'persona', 'pro-activate', 'vocabulary', 'cast', 'usage', 'publication', 'editorial', 'sources', 'media', 'channel', 'channels', 'voicebox-check', 'voicebox-create', 'voicebox-start', 'connect', 'newsletter-login', 'prepare', 'check-model', 'collect-metrics', 'member-add', 'member-disable', 'desk', 'api-sample', 'api-connect'].includes(operation)) return 'manage';
+  if (['newsletter-settings', 'persona', 'pro-activate', 'vocabulary', 'cast', 'usage', 'channel', 'channels', 'voicebox-check', 'voicebox-create', 'voicebox-start', 'connect', 'newsletter-login', 'prepare', 'check-model', 'collect-metrics', 'member-add', 'member-disable', 'desk', 'api-sample', 'api-connect'].includes(operation)) return 'manage';
   throw new Error('Unknown journey operation');
 }
 
@@ -378,7 +381,20 @@ export async function applyExecutiveAction(operation: string, data: Record<strin
   const id = packageId === undefined ? undefined : safeId(text(packageId, 'package id'));
   const meta = id ? read<any>(contained(root, 'workdir/videos', id, 'meta.json'), null) : null;
   const edition = meta?.edition || (data.edition === undefined ? 'daily-roundup' : safeId(text(data.edition, 'edition')));
-  authorize(permission, { root, edition, author: meta?.createdBy, platform: typeof data.platform === 'string' ? data.platform : undefined });
+  const actor = authorize(permission, { root, edition, author: meta?.createdBy, platform: typeof data.platform === 'string' ? data.platform : undefined });
+  if (actor.role === 'agent') {
+    // The control API already limits what an agent may call; the worker re-checks the shape, because a connected agent holds a token
+    // it could present directly. Settings only: the saved writer, saved voice profile and credentials never change from here.
+    const { preserveModel, verifyFeeds, ...fields } = data;
+    const forbid = (): never => { throw new Error('Forbidden: a connected agent may change only the settings its harness_configure and harness_personalize tools offer'); };
+    // The saved writer replaces model fields below (preserveModel), and the schema's list predates some selectable writers.
+    const { model: _model, modelName: _modelName, modelUrl: _modelUrl, ...publicationFields } = fields;
+    if (['publication', 'editorial', 'media'].includes(operation) && !agentSetupSchema.safeParse({ operation, ...(operation === 'publication' ? publicationFields : fields) }).success) forbid();
+    if (operation === 'personalize' && !personalizeSchema.safeParse(data).success) forbid();
+    if (operation === 'publication' && preserveModel !== true) throw new Error('Forbidden: a connected agent keeps the saved writer; change it in the browser');
+    if (operation === 'media' && data.voiceProvider === 'voicebox' && data.voiceProfile !== config(root, 'avatar').voicebox?.profile) throw new Error('Forbidden: select your voice profile in the browser');
+    if (data.feeds !== undefined) data = { ...data, verifyFeeds: true };
+  }
   loadWorkspaceEnv(root);
   if (operation === 'watchdog') {
     const watchdog = saveWatchdogSettings(root, data);
@@ -1009,7 +1025,7 @@ export async function applyExecutiveAction(operation: string, data: Record<strin
       const keys: Record<string, unknown> = {};
       if (data.voiceKey && !['elevenlabs', 'resemble'].includes(voice)) throw new Error('Local and built-in voices do not require a provider key');
       if (data.voiceKey) keys[voice === 'elevenlabs' ? 'ELEVENLABS_API_KEY' : 'RESEMBLE_API_KEY'] = data.voiceKey;
-      saveExecutiveSecrets(root, keys);
+      if (Object.keys(keys).length) saveExecutiveSecrets(root, keys);
       Object.assign(avatar, { mode, voiceProvider: voice });
       if (voice === 'voicebox') { const name = text(data.voiceProfileName ?? (avatar.voicebox?.profile === voiceProfile ? avatar.voicebox?.name ?? '' : ''), 'voice name', 100); avatar.voicebox = { profile: voiceProfile, ...(name ? { name } : {}) }; }
       avatar.elevenlabs = { ...avatar.elevenlabs, voiceId }; avatar.resemble = { ...avatar.resemble, voiceUuid };

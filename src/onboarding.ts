@@ -82,7 +82,7 @@ export function configureExecutive(codeRoot = CODE_ROOT, suppliedBrief?: string,
   const b = parseBrief(briefText);
   let root = codeRoot === CODE_ROOT ? activeRoot() : join(codeRoot, "workspaces/default");
   if (root === codeRoot || !existsSync(join(root, "workspace.json"))) root = createWorkspace("default", false, codeRoot);
-  authorize("manage", { root });
+  authorize(preserveModel ? "configure" : "manage", { root });
   const unlock = releaseLock(root);
   try {
   if (!preserveModel && b.model === "opencode") validateOpenCodeModel(b.modelName || read<any>(join(root, "config/model.json"), {}).providers?.opencode?.model);

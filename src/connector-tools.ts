@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { atomicJson, authenticate, contained, read, safeId, members } from './workspaces.js';
 import { releaseLock } from './release-lock.js';
 import { packRequest, runWorkflowPack } from './workflow-packs.js';
-import { agentSetupSchema, JOURNEY_GUIDANCE } from './journey-guidance.js';
+import { agentSetupSchema, personalizeSchema, JOURNEY_GUIDANCE } from './journey-guidance.js';
 import { linkedinWorkbenchInputSchema } from './linkedin-workbench.js';
 
 const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,159}$/);
@@ -14,15 +14,6 @@ const key = z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const platform = z.enum(['youtube', 'x', 'linkedin', 'instagram', 'threads', 'reddit', 'tiktok']);
 const item = { videoId: id, platform, itemId: hash };
-const short = z.string().max(300);
-const personalizeSchema = z.object({
-  newsletterPreset: z.enum(['clean', 'editorial', 'briefing', 'signal', 'neobrutal', 'neon', 'doodle', 'feed']).optional(),
-  theme: z.enum(['', 'light', 'dark']).optional(), accent: z.string().regex(/^(#[0-9a-fA-F]{6})?$/).optional(), fontPairing: z.enum(['', 'sans', 'serif', 'mixed']).optional(),
-  organization: short.optional(), tagline: short.optional(), website: short.optional(), footer: short.optional(),
-  styleDirection: z.enum(['', 'boardroom-concise', 'friendly-explainer', 'high-energy-product']).optional(), styleNotes: short.optional(),
-  newsletterLength: z.enum(['', 'quick', 'standard', 'deep']).optional(), videoLength: z.enum(['', 'short', 'standard', 'deep']).optional(), cadence: z.enum(['', 'daily', 'weekdays', 'three-weekly', 'weekly', 'twice-monthly']).optional(),
-  videoFraming: z.enum(['', 'cards', 'corner', 'opening', 'full']).optional(), videoBackground: z.enum(['', 'brand', 'studio', 'newsroom']).optional(), captionStyle: z.enum(['', 'clean', 'boxed', 'pill', 'glow']).optional(),
-}).strict();
 const confirmation = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('approve'), id, expectedHash: hash }).strict(),
   z.object({ operation: z.enum(['publish-newsletter', 'link-video']), id, expectedHash: hash }).strict(),
