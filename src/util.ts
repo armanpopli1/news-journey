@@ -46,9 +46,9 @@ export function readJson<T>(path: string, fallback?: T): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
-export function writeJson(path: string, data: unknown): void {
+export function writeJson(path: string, data: unknown, options: { mode?: number } = {}): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
+  writeFileSync(path, JSON.stringify(data, null, 2) + "\n", options.mode === undefined ? undefined : { mode: options.mode });
 }
 
 export function videoDir(id: string): string {

@@ -18,7 +18,8 @@ export function loadTokens(provider: string): TokenSet | null {
 
 export function saveTokens(provider: string, tokens: TokenSet): void {
   const p = tokenPath(provider);
-  writeJson(p, tokens);
+  // Create the file owner-only; a chmod after the write leaves a window where it is world-readable.
+  writeJson(p, tokens, { mode: 0o600 });
   if (process.platform !== "win32") chmodSync(p, 0o600);
 }
 
