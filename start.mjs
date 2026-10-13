@@ -83,8 +83,13 @@ if(args.has('--status')){
         stage='Install private Python tooling';console.log('\n'+stage+'…');
         const suffix=process.platform==='win32'?'ps1':'sh';
         const url='https://astral.sh/uv/0.12.10/install.'+suffix;
+        // The installer is run with a shell, so a changed script means changed code on this machine.
+        // Pin the bytes of the 0.12.10 installers, not just the version in the URL.
+        const UV_INSTALLER_SHA256={sh:'a3196b75f697a1adaa5e4af34ffba7629c710931ab1dac33bab59ecf228080bb',ps1:'a4925067919bb02c1b2a5d3b4471e8cf20da76567197ab67d451a08d95421c78'};
         const response=await fetch(url,{signal:AbortSignal.timeout(30000)});if(!response.ok)throw new Error('uv installer HTTP '+response.status);
         const installer=await response.text();if(installer.length>2e6)throw new Error('Unexpected uv installer size');
+        const digest=createHash('sha256').update(installer).digest('hex');
+        if(digest!==UV_INSTALLER_SHA256[suffix])throw new Error('uv installer checksum mismatch: expected '+UV_INSTALLER_SHA256[suffix]+', got '+digest+'. Install uv yourself from https://docs.astral.sh/uv/ or update the pinned hash after verifying the script.');
         mkdirSync(join(root,'.tools'),{recursive:true});const file=join(root,'.tools','install-uv.'+suffix);writeFileSync(file,installer);
         env.UV_UNMANAGED_INSTALL=join(root,'.tools/bin');
         run(process.platform==='win32'?'powershell.exe':'sh',process.platform==='win32'?['-NoProfile','-ExecutionPolicy','Bypass','-File',file]:[file],stage);
