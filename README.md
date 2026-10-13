@@ -64,6 +64,7 @@ brief ─► sources ─► stories ─► script ─► newsletter ─► visua
 - **Sources** are found for your topics and read; only pages that are actually readable count. If fewer than expected are found, the edition is shorter, never stopped.
 - **Stories** are selected and every factual claim is pinned to its source before writing starts. Those pinned claims are the whole fact budget.
 - **The script** is written once, then judged against the pinned claims. Blocking findings drive one automatic repair. A finding that quotes wording the script does not contain cannot block it.
+- **Dates** are checked in code, not only in the prompt. A story whose sources are all older than the collection window (72 hours for RSS and live editions, `hn.windowHours` for Hacker News when that is the widest) is marked `(reported <date>)` beside its citation, and the writer is sent back if it calls that story "today", "this week", "upcoming" and the like. Undated sources are never marked.
 - **The newsletter** is the accepted script, formatted. Nothing is researched or reviewed again at this stage; length and shape are checked before any narration is bought.
 - **Visuals** per story: the source's own photograph (with attribution and a rights note), an authored diagram checked at phone size, or an attributed headline card. You choose, or accept the recommendation.
 - **Narration and video** use the built-in narrator or your own local voice, with a transcript check on the audio, then render locally.

@@ -249,7 +249,7 @@ export async function runLiveEdition(options: LiveEditionOptions) {
       const checkpointPath = join(output, 'editorial-checkpoint.json');
       const written = await runDailyEditorial(input, { writer: route(writer, writerRuntime, 'writer'), reviewer: route(reviewer, reviewerRuntime, 'reviewer'),
         ...(suppliedNewsletter ? { providedNewsletter: JSON.parse(suppliedNewsletter) } : {}),
-        requireCorroboration: options.requireCorroboration === true,
+        requireCorroboration: options.requireCorroboration === true, windowHours: options.windowHours ?? 72,
         maxEvidenceBytes: liveEvidenceBytes(writerRuntime.provider),
         checkpoint: existsSync(checkpointPath) ? JSON.parse(readFileSync(checkpointPath, 'utf8')) : undefined,
         save: checkpoint => atomicJson(checkpointPath, checkpoint) });

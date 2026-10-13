@@ -8,6 +8,7 @@ import { isPublicVideoUrl } from "../post/public-video-url.js";
 // clipboard (rich text) → paste into the composer → publish.
 
 import type { NewsletterData } from "./newsletter-html.js";
+import { reportedMarker } from "./source-age.js";
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -25,6 +26,8 @@ export function renderLinkedInEdition(d: NewsletterData): string {
   const { issue } = d;
   const publicVideoUrl = d.video?.posted && isPublicVideoUrl(d.video.videoUrl) ? d.video.videoUrl : null;
   const figure=(url:string,index=0)=>{const story=newsletterMotionForSource(d,url,index);return story?.figureDataUri ? `<p><img src="${story.figureDataUri}" alt="${esc(story.title)}" style="max-width:100%"></p><p>${esc(story.diagram?.visual?.caveat||story.status)} · Silent visual</p>` : "";};
+  // "(reported Sep 14)": the source predates the edition window, so its own date stays visible.
+  const reported = (url: string, joiner = " ") => d.staleDays?.[url] ? `${joiner}${esc(joiner === " " ? `(${reportedMarker(d.staleDays[url]!, d.date)})` : reportedMarker(d.staleDays[url]!, d.date))}` : "";
   const videoLine = d.video
     ? publicVideoUrl
       ? `<p><b>🎬 Today's ${d.video.durationSec}-second video briefing:</b> <a href="${esc(safeUrl(publicVideoUrl))}">${esc(d.video.headline)}</a></p>`
@@ -32,7 +35,7 @@ export function renderLinkedInEdition(d: NewsletterData): string {
     : "";
 
   const items = issue.items
-    .map((it,i) => `<li><b><a href="${esc(safeUrl(it.url))}">${esc(it.name)}</a></b> — ${esc(it.line)}${figure(it.url,i+1)}</li>`)
+    .map((it,i) => `<li><b><a href="${esc(safeUrl(it.url))}">${esc(it.name)}</a></b> — ${esc(it.line)}${reported(it.url)}${figure(it.url,i+1)}</li>`)
     .join("\n");
   const itemsSection = issue.items.length
     ? `<h2>${NEWSLETTER_SECTION_HEADINGS.worthYourTime}</h2>\n<ul>\n${items}\n</ul>`
@@ -53,7 +56,7 @@ export function renderLinkedInEdition(d: NewsletterData): string {
 <p><i>${esc((d.publisher ?? EXAMPLE_PUBLISHER).publication)} — ${esc((d.publisher ?? EXAMPLE_PUBLISHER).audience)}. ${d.editionBadge ? esc(d.editionBadge) : `Issue № ${d.issueNo}`} · ${esc(d.dateLong)}</i></p>
 ${videoLine}
 <h2>The lead: ${esc(issue.lead.title)}</h2>
-<p>${esc(issue.lead.body)} (<a href="${esc(safeUrl(issue.lead.sourceUrl))}">${esc(issue.lead.sourceName)}</a>)</p>
+<p>${esc(issue.lead.body)} (<a href="${esc(safeUrl(issue.lead.sourceUrl))}">${esc(issue.lead.sourceName)}</a>${reported(issue.lead.sourceUrl, ", ")})</p>
 ${figure(issue.lead.sourceUrl)}
 ${itemsSection}
 ${radarSection}

@@ -328,3 +328,26 @@ test('a finding may quote multiple exact passages from one owned source, within 
   });
   assert.equal(model.calls.length, 2);
 });
+
+test('edition-relative wording about a story whose sources predate the window is repaired before review, and fresh stories keep theirs', async () => {
+  const old = structuredClone(input); old.stories[0]!.sources[0]!.publishedAt = '2026-08-20'; // 26 days before the edition, window 72 h
+  const bad = newsletter();
+  bad.sections[0]!.text += ' The Alpha notice is expected to open today.';
+  bad.sections[1]!.text += ' The Bravo notice is expected to open today.'; // fresh source: today is plausible
+  const model = routes(taskId => taskId === 'daily-editorial-newsletter-write-1' ? bad : undefined);
+  const result = await runDailyEditorial(old, { ...model, windowHours: 72 });
+  assert.equal(model.calls[0]!.role, 'writer');
+  assert.equal(model.calls[1]!.role, 'writer', 'the finding is returned to the writer, not to the reviewer');
+  assert.match(model.calls[1]!.prompt, /edition-relative wording \(.{0,4}today.{0,4}\).*2026-08-20.*26 days/s);
+  assert.ok(result.checkpoint.artifacts.newsletter.failures.some(row => /^Alpha: text uses edition-relative wording/.test(row)));
+  assert.ok(!result.checkpoint.artifacts.newsletter.failures.some(row => row.startsWith('Bravo')), 'a fresh source keeps relative wording');
+  assert.equal(result.checkpoint.artifacts.newsletter.candidates.length, 2);
+});
+
+test('without a window the default 72 hours applies, and a story inside it is never flagged', async () => {
+  const recent = structuredClone(input); recent.stories[0]!.sources[0]!.publishedAt = '2026-09-12'; // three days: inside 72 h
+  const draft = newsletter(); draft.sections[0]!.text += ' The Alpha notice is expected to open today.';
+  const model = routes(taskId => taskId.includes('newsletter-write') ? draft : undefined);
+  await runDailyEditorial(recent, model);
+  assert.equal(model.calls.length, 4, 'no repair: inside the window');
+});

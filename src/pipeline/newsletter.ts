@@ -21,6 +21,8 @@ import { assertCanonicalNewsletterHeadings, NEWSLETTER_SECTION_HEADINGS } from "
 import type { SelectionReportRow } from "./user-ranking.js";
 import { renderNewsletterHtml, type NewsletterData } from "./newsletter-html.js";
 import { renderLinkedInEdition } from "./newsletter-linkedin.js";
+import { reportedMarker, staleStoryAges } from "./source-age.js";
+import { currentEditionWindowHours } from "./edition-window.js";
 import { newsletterWordCount, type NewsletterStory, type NewsletterWordBudget } from "./newsletter-draft.js";
 import { formatScriptNewsletter, type ScriptNewsletterCheckpoint } from './newsletter-from-script.js';
 import { automationAuto } from '../automation.js';
@@ -440,6 +442,16 @@ async function briefingAudio(day: string, vid?: string): Promise<{ dataUri: stri
   return { dataUri: `data:audio/mp4;base64,${readFileSync(m4a).toString("base64")}`, words };
 }
 
+/** Which selected stories are older than the edition window, from the publication dates captured with their sources:
+ * the pinned claim evidence, else the Journey's saved editorial input. Undated sources never mark a story stale. */
+export function newsletterStaleDays(dir: string, topic: Topic, day: string, windowHours = currentEditionWindowHours()): NewsletterData['staleDays'] {
+  const journey = readJson<{ input?: { stories?: { primaryUrl: string; sources: { url: string; publishedAt?: string | null }[] }[] } } | null>(join(dir, 'journey-editorial-input.json'), null);
+  const stories = (topic.stories ?? [{ primaryUrl: topic.primaryUrl, claimEvidence: undefined }]).map(story => ({ primaryUrl: story.primaryUrl,
+    sources: story.claimEvidence?.length ? story.claimEvidence : journey?.input?.stories?.find(row => row.primaryUrl === story.primaryUrl)?.sources ?? [] }));
+  const stale = staleStoryAges(stories, day, windowHours);
+  return Object.keys(stale).length ? stale : undefined;
+}
+
 /** The "video available after publishing" line promises a file; announce a video only when one exists or is public. */
 export function editionHasVideo(publicUrl: string, hasRenderedFile: boolean): boolean {
   return hasRenderedFile || isPublicVideoUrl(publicUrl);
@@ -532,7 +544,8 @@ async function supportingCandidates(day: string, currentVideo: string | undefine
 }
 
 export function toMarkdown(d: NewsletterData): string {
-  const items = d.issue.items.map((i) => `- **[${i.name}](${i.url})** — ${i.line}`).join("\n");
+  const reported = (url: string, joiner: string) => d.staleDays?.[url] ? `${joiner}${joiner === " " ? `(${reportedMarker(d.staleDays[url]!, d.date)})` : reportedMarker(d.staleDays[url]!, d.date)}` : "";
+  const items = d.issue.items.map((i) => `- **[${i.name}](${i.url})** — ${i.line}${reported(i.url, " ")}`).join("\n");
   const itemsSection = d.issue.items.length ? `\n## ${NEWSLETTER_SECTION_HEADINGS.worthYourTime}\n${items}\n` : "";
   const radarSection = d.issue.radar.length
     ? `\n## ${NEWSLETTER_SECTION_HEADINGS.radar}\n${d.issue.radar.map((r) => `- [${r.repo}](${r.url}) — ${r.line}`).join("\n")}\n`
@@ -554,7 +567,7 @@ export function toMarkdown(d: NewsletterData): string {
 ${video}
 
 ## The lead: ${d.issue.lead.title}
-${d.issue.lead.body} ([${d.issue.lead.sourceName}](${d.issue.lead.sourceUrl}))
+${d.issue.lead.body} ([${d.issue.lead.sourceName}](${d.issue.lead.sourceUrl})${reported(d.issue.lead.sourceUrl, ", ")})
 ${itemsSection}${radarSection}${signals}${covered}
 — ${d.publisher?.name ?? publisher().name}
 `;
@@ -708,6 +721,7 @@ export async function newsletter(date?: string, rerenderOnly = false, editionId?
       const topic = readJson<Topic>(join(VIDEOS_DIR, vid, "topic.json"));
       assertNewsletterCache(data, topic);
       stories = topic.stories ?? [{ headline: topic.headline, summary: topic.angle, weight: "lead" as const, primaryUrl: topic.primaryUrl }];
+      data.staleDays = newsletterStaleDays(videoDir(vid), topic, data.date);
     }
     // Presentation-only refresh: keep the already approved story set and source links.
     // No new supporting stories, source fetches or editorial calls are introduced here.
@@ -763,6 +777,7 @@ export async function newsletter(date?: string, rerenderOnly = false, editionId?
     ...newsletterCacheIdentity(readJson<Topic>(join(VIDEOS_DIR, vid!, 'topic.json')), issue),
     video: currentVideo,
     coveredWeek: recentEntries(7).filter(e => e.status === "posted").map((e) => e.headline),
+    staleDays: newsletterStaleDays(videoDir(vid!), readJson<Topic>(join(VIDEOS_DIR, vid!, 'topic.json')), day),
     editionBadge: resolveBadge(ed, serial), // "EXTRA!! EDITION!! № 1 · WEEK 1" (null for daily)
     editionTitle: resolveTitle(ed, issue.subject, serial), // article title used at publish time
     editionCover: ed.coverFile, // cover the publisher uploads for this edition

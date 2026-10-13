@@ -10,6 +10,8 @@ import { activeRoot } from "../workspaces.js";
 import { createHash } from 'node:crypto';
 import { sourceAccountProblem } from "./source-account.js";
 import { publicationIntro, spokenScriptText } from './narration.js';
+import { staleEditionWording } from './source-age.js';
+import { currentEditionWindowHours } from './edition-window.js';
 import { createSourceSupportContext, ensureSourceSupportedText, NEWSLETTER_SOURCE_CONTEXT_RULES, SOURCE_SUPPORT_VERSION, type SourceSupportContext } from './source-support.js';
 import { ensureSourceSupportedFields, FIELD_SUPPORT_VERSION, type AuthoredField } from './field-support.js';
 import { withJsonOutputContract } from '../llm/json-output-contract.js';
@@ -261,6 +263,9 @@ function factsSourceContext(facts: unknown): SourceSupportContext | undefined {
   const context = (facts as { sourceContext?: SourceSupportContext } | null)?.sourceContext;
   return context ? createSourceSupportContext(context.editionDay, context.primaryUrl, context.sources) : undefined;
 }
+/** A repairable finding when narration about a story whose sources all predate the edition window says "today", "this week" and the like. */
+const staleWordingProblem = (context?: SourceSupportContext) => (text: unknown): string | null => context && typeof text === 'string'
+  ? staleEditionWording(text, context.sources.map(source => source.publishedAt), context.editionDay, currentEditionWindowHours()) : null;
 const sourceContextPrompt = (context?: SourceSupportContext) => context
   ? `\n${NEWSLETTER_SOURCE_CONTEXT_RULES}\nSOURCE_CONTEXT: ${JSON.stringify(context)}` : '';
 
@@ -273,15 +278,16 @@ export async function draftNarration(prompt: string, facts: unknown, target: Nar
   if (!Array.isArray(claims) || !claims.length || claims.some(claim => typeof claim !== 'string' || !claim.trim())) throw new Error('Narration needs pinned source claims before writing');
   const sourceContext = factsSourceContext(facts);
   const context = task ?? preparedModelTask({ role: 'script', capability: 'script-draft', taskId: 'narration', topicIds: ['topic'], protocol: { version: 1, operation: 'narration' }, evidence: facts });
+  const stale = staleWordingProblem(sourceContext);
   const initial = await call<{ voiceover: string }>(prompt + sourceContextPrompt(sourceContext), withJsonOutputContract(
-    (value: { voiceover: string }) => narrationTextProblem(value?.voiceover),
+    (value: { voiceover: string }) => narrationTextProblem(value?.voiceover) ?? stale(value?.voiceover),
     { type: 'object', properties: { voiceover: { type: 'string', minLength: 1, maxLength: 6000 } }, required: ['voiceover'], additionalProperties: false },
   ), context);
-  const shapeProblem = narrationTextProblem(initial?.voiceover);
+  const shapeProblem = narrationTextProblem(initial?.voiceover) ?? stale(initial?.voiceover);
   if (shapeProblem) throw new Error(shapeProblem);
   const text = await repairTextLength(initial.voiceover, facts, target, call, undefined, context);
   const voiceover = await ensureSourceSupportedText(text, claims, call,
-    value => narrationTextProblem(value) ?? narrationLengthProblem(value, target), { min: target.min, max: target.max }, { task: context, sourceContext });
+    value => narrationTextProblem(value) ?? stale(value) ?? narrationLengthProblem(value, target), { min: target.min, max: target.max }, { task: context, sourceContext });
   return { voiceover };
 }
 
@@ -322,7 +328,7 @@ export async function repairTextLength(text: string, facts: unknown, target: Nar
     const validate = (value: { replacement: string }) => {
       const problem = narrationTextProblem(value?.replacement); if (problem) return problem;
       const revised = assemble(value.replacement);
-      const revisedProblem = narrationTextProblem(revised); if (revisedProblem) return revisedProblem;
+      const revisedProblem = narrationTextProblem(revised) ?? staleWordingProblem(sourceContext)(revised); if (revisedProblem) return revisedProblem;
       if (revised === voiceover || distance(revised) >= previousDistance) return `The edit did not improve the measured length: the assembled paragraph has ${countWords(revised)} words, target ${target.min}–${target.max}. Change only the replacement; write ${min}–${max} words without repeating the locked text.`;
       return null;
     };

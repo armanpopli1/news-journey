@@ -3,6 +3,7 @@ import { EXAMPLE_PUBLISHER, type Publisher } from "../publisher.js";
 import { brandTheme, type BrandTheme } from "../personalization.js";
 import { NEWSLETTER_SECTION_HEADINGS } from "./newsletter-contract.js";
 import { isPublicVideoUrl } from "../post/public-video-url.js";
+import { reportedMarker } from "./source-age.js";
 // Neutral newsletter edition. The harness ships NO house design: this shell is a plain, readable layout
 // driven entirely by the customer's brand tokens (light/dark, accent, fonts, identity), and a workspace
 // can replace the whole shell with its own `branding/newsletter.html` — the harness then only fills the
@@ -47,6 +48,8 @@ export interface NewsletterData {
   dateLong: string;
   video: { id: string; headline: string; durationSec: number; videoUrl: string; posted?: boolean } | null;
   coveredWeek: string[];
+  /** Source URL -> publication day and age, only for stories whose sources all predate the edition window. Rendered as a "reported <date>" marker. */
+  staleDays?: Record<string, { publishedOn: string; days: number }>;
   audioDataUri?: string | null; // self-contained voiceover embed (data:audio/mp4;base64,...)
   captionWords?: { w: string; start: number; end: number }[] | null; // karaoke sync for the player
   videoDataUri?: string | null; // embedded mp4 until the video is publicly posted
@@ -117,7 +120,7 @@ export function renderNewsletterHtml(d: NewsletterData): string {
         <span class="idx">${i + 1}</span>
         <div>
           <a class="item-name" href="${esc(safeUrl(it.url))}">${esc(it.name)}</a>
-          <p class="item-line">${esc(it.line)}</p>
+          <p class="item-line">${esc(it.line)}${d.staleDays?.[it.url] ? ` <span class="reported" style="opacity:.7;font-size:.9em">(${esc(reportedMarker(d.staleDays[it.url]!, d.date))})</span>` : ""}</p>
           ${newsletterVisual(newsletterMotionForSource(d,it.url,i+1),d.date)}
         </div>
       </div>`
@@ -190,7 +193,7 @@ export function renderNewsletterHtml(d: NewsletterData): string {
   <section class="lead">
     <h2 class="sec-title">${esc(issue.lead.title)}</h2>
     <p>${esc(issue.lead.body)}</p>
-    <a class="src" href="${esc(safeUrl(issue.lead.sourceUrl))}">Source: ${esc(issue.lead.sourceName)}</a>
+    <a class="src" href="${esc(safeUrl(issue.lead.sourceUrl))}">Source: ${esc(issue.lead.sourceName)}</a>${d.staleDays?.[issue.lead.sourceUrl] ? ` <span class="reported" style="opacity:.7;font-size:.9em">(${esc(reportedMarker(d.staleDays[issue.lead.sourceUrl]!, d.date))})</span>` : ""}
   ${newsletterVisual(newsletterMotionForSource(d,issue.lead.sourceUrl),d.date)}
   </section>`;
 

@@ -22,6 +22,7 @@ import type { Issue } from './newsletter.js';
 import { releaseLock } from '../release-lock.js';
 import { readJourneySourceReplay } from './journey-source-replay.js';
 import { readJourneyReviewRecovery } from './journey-transport-reconciliation.js';
+import { currentEditionWindowHours } from './edition-window.js';
 
 export const JOURNEY_EDITORIAL_VERSION = 1;
 const hashText = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -193,7 +194,7 @@ export async function prepareJourneyEditorial(context: Context, recovery: Pick<D
     // reinterpret an unfinished historical recipe under a fresh allowance.
     if (legacy && (!savedCheckpoint || Object.values(savedCheckpoint.artifacts).some(state => state.status !== 'accepted'))) throw new Error('Historical editorial package is preserved. Use a new package for the script-first workflow; the old evidence and allowance remain unchanged.');
     const execute = legacy ? runDailyEditorial : runScriptFirstEditorial;
-    const result = await execute(input, { maxEvidenceBytes: 131072, scriptFormat: format,
+    const result = await execute(input, { maxEvidenceBytes: 131072, scriptFormat: format, windowHours: currentEditionWindowHours(),
       newsletterBudget: { min: selectedLength[0]!, max: selectedLength[1]! }, scriptBudget: video,
       writer: { identity, call: context.call('script') }, reviewer: { identity, call: context.call('newsletter') },
       checkpoint: savedCheckpoint ?? undefined, ...recovery,

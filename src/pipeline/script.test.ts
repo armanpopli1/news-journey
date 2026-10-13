@@ -383,6 +383,17 @@ function answerQueue(answers: unknown[], seen: string[]): DraftCall {
   };
 }
 
+test('narration for a story whose source predates the window is rejected for edition-relative wording, a fresh source is not', async () => {
+  const claims = ['The board announced its annual budget and scheduled a vote on it.'];
+  const facts = (publishedAt: string) => ({ title: 'Budget', claims, sourceContext: createSourceSupportContext('2026-10-14', 'https://board.example.org/budget', [{ url: 'https://board.example.org/budget', publishedAt }]) });
+  const stale = 'The board announced its annual budget this week and scheduled a vote on it.';
+  const seen: string[] = [];
+  await assert.rejects(draftNarration('Write this story.', facts('2026-09-01'), exactTarget(8, 20), answerQueue([{ voiceover: stale }], seen)), /edition-relative wording \("this week"\).*2026-09-01.*43 days/s);
+  assert.equal(seen.length, 1, 'rejected as validation feedback on the first draft, before length edits or source review');
+  const fresh: string[] = [];
+  const result = await draftNarration('Write this story.', facts('2026-10-13'), exactTarget(8, 20), answerQueue([{ voiceover: stale }], fresh));
+  assert.equal(result.voiceover, stale, 'a source from yesterday may be written as this week');
+});
 test('short narration adds a complete sourced sentence while retaining existing wording exactly', async () => {
   const original = 'The league announced an independent review of officiating decisions.  No rule changes have been adopted.';
   const addition = 'The review will examine replay procedures and publish its findings after the season.';
